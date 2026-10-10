@@ -54,7 +54,13 @@ function setup(t: TestContext) {
       registerTool: (tool: any) => tools.set(tool.name, tool),
       registerCommand: (name: string, command: any) => commands.set(name, command),
       registerMessageRenderer() {},
-      sendMessage: (message: any) => notices.push(message),
+      sendMessage: (message: any) => {
+        notices.push(message);
+        // Mirror the real session: custom messages persist as entries.
+        if (message.customType) {
+          entries.push({ type: "custom_message", ...message });
+        }
+      },
     } as unknown as ExtensionAPI, {
       historyDirectory: historyDir,
       availabilityPath: path.join(dir, "availability.json"),
@@ -77,14 +83,12 @@ function setup(t: TestContext) {
         entries.push({ type: "message", message: { role: "toolResult", toolName: name, toolCallId: id, ...result } });
         return result;
       },
-      async reminder() {
-        return hooks.get("context")({ messages: [{ role: "user", content: "continue", timestamp: 0 }] }, ctx);
-      },
       commands,
     };
   }
+
   return {
-    runtime, runs, ctx, notices, warnings, entries, historyDir,
+    runtime, runs, ctx, notices, warnings, entries, historyDir, dir,
     setSpawn(value: typeof spawn) { spawn = value; },
     branch(value: any[]) { activeEntries = value; },
     switchSession(id: string) { sessionId = id; entries.length = 0; },
@@ -101,15 +105,17 @@ test("background check stays repeatable across reload, branches, and reopening t
   const first = await runtime.call("subagent_check", { id: "sub-1" });
   const second = await runtime.call("subagent_check", { id: "sub-1" });
   assert.deepEqual(first, second);
-  assert.equal(await runtime.reminder(), undefined);
   await runtime.shutdown();
   runtime = h.runtime();
   await runtime.start();
   assert.equal(h.notices.length, 1, "restoring does not emit another completion notice");
+  assert.match(
+    h.notices[0].content,
+    /finished \(ran \d+s\) — collect the result with subagent_check\. Task: "task"/,
+  );
   const restored = await runtime.call("subagent_check", { id: "sub-1" });
   assert.deepEqual(restored, first);
   h.branch([h.entries[0]]);
-  assert.match(JSON.stringify(await runtime.reminder()), /Ended.*sub-1/s);
   const waited = await runtime.call("subagent_wait", { ids: ["sub-1"] });
   assert.match(waited.content[0].text, /finished/);
   assert.equal(waited.details.entries[0].result.output, "", "wait does not hydrate history");
@@ -192,7 +198,10 @@ for (const source of ["child", "tool", "command"] as const) {
     assert.equal(h.runs[0].state, expectedState);
     assert.equal(h.notices.length, 1);
     assert.equal(h.notices[0].details.outcome, expectedState);
-    assert.match(JSON.stringify(await runtime.reminder()), new RegExp(`Ended.*${expectedState}`, "s"));
+    assert.match(
+      h.notices[0].content,
+      new RegExp(`${expectedState} — .*\\(ran \\d+s\\) — collect the result with subagent_check`),
+    );
     const waited = await runtime.call("subagent_wait", { ids: ["sub-1"] });
     assert.match(waited.content[0].text, new RegExp(`: ${expectedState}`));
     const checked = await runtime.call("subagent_check", { id: "sub-1" });
@@ -267,4 +276,53 @@ test("view loads foreground and background history after reopening without requi
   }
   await assert.rejects(runtime.call("subagent_check", { id: "sub-1" }), /Unknown subagent/);
   assert.match((await runtime.call("subagent_check", { id: "sub-2" })).content[0].text, /durable answer/);
+});
+
+test("availability announcements are append-only messages with diff dedup", async (t) => {
+  const h = setup(t);
+  const availability = () => h.notices.filter((m) => m.customType === "subagent-availability");
+  const writeAvailability = (disabled: Record<string, unknown>) =>
+    fs.writeFileSync(path.join(h.dir, "availability.json"), JSON.stringify({ version: 1, disabled }));
+
+  // A fresh session with OFFLINE roles announces them up front, before the
+  // first user message.
+  writeAvailability({ reviewer: { reason: "quota exhausted", at: "2026-06-14T12:00:00.000Z" } });
+  let runtime = h.runtime();
+  await runtime.start();
+  assert.equal(availability().length, 1);
+  assert.match(availability()[0].content, /OFFLINE.*reviewer — quota exhausted/s);
+
+  // Reload with unchanged state: the last announcement on the active branch
+  // matches, so nothing is appended.
+  await runtime.shutdown();
+  runtime = h.runtime();
+  await runtime.start();
+  assert.equal(availability().length, 1, "reload does not duplicate the announcement");
+
+  // /subagent:avail changes append a fresh announcement; on/off both do.
+  await runtime.commands.get("subagent:avail").handler("explorer off 6h provider outage", h.ctx);
+  assert.equal(availability().length, 2);
+  assert.match(availability()[1].content, /explorer — provider outage \(until /);
+  await runtime.commands.get("subagent:avail").handler("reviewer on", h.ctx);
+  assert.equal(availability().length, 3);
+  assert.match(availability()[2].content, /OFFLINE.*explorer/s);
+  assert.ok(!availability()[2].content.includes("reviewer"), "re-enabled role left the list");
+  await runtime.commands.get("subagent:avail").handler("explorer on", h.ctx);
+  assert.equal(availability().length, 4);
+  assert.match(availability()[3].content, /back online/);
+
+  // State file gone (all online): the last announcement already said
+  // "back online", so reload stays silent.
+  fs.rmSync(path.join(h.dir, "availability.json"));
+  await runtime.shutdown();
+  runtime = h.runtime();
+  await runtime.start();
+  assert.equal(availability().length, 4, "all-online matches the last announcement: silence");
+
+  // A session that never announced anything and has nothing offline
+  // also stays silent.
+  h.switchSession("session-c");
+  runtime = h.runtime();
+  await runtime.start();
+  assert.equal(availability().length, 4, "nothing to announce, nothing said before");
 });

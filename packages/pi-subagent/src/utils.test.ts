@@ -49,7 +49,7 @@ import {
   completionNoticeLines,
   formatToolCall,
   briefFilesUsed,
-  collectDeliveredIds,
+  completionNoticeText,
 } from "./utils.ts";
 import type { ActivityEntry, SubagentResult, SubagentRole } from "./types.ts";
 
@@ -960,54 +960,40 @@ describe("briefFilesUsed", () => {
   });
 });
 
-describe("collectDeliveredIds", () => {
-  // A check tool result carrying a terminal snapshot (exitCode >= 0) —
-  // the shape the check tool persists into the session tree.
-  const checkEntry = (id: string, exitCode = 0) => ({
-    type: "message",
-    message: {
-      role: "toolResult",
-      toolName: "subagent_check",
-      details: { id, role: "worker", result: { exitCode } },
-    },
+describe("completionNoticeText", () => {
+  test("finished carries the outcome, duration, check pointer, and task preview", () => {
+    const result = baseResult({ task: "inspect the auth flow", elapsedMs: 192_000 });
+    const text = completionNoticeText("sub-1", "explorer", "finished", result);
+    assert.equal(
+      text,
+      'Background subagent sub-1 (explorer) finished (ran 3m12s) — collect the result with subagent_check. Task: "inspect the auth flow"',
+    );
   });
 
-  test("collects ids from subagent_check tool results only", () => {
-    const entries = [
-      { type: "message", message: { role: "user", content: "hi" } },
-      { type: "message", message: { role: "assistant", content: [] } },
-      { type: "message", message: { role: "toolResult", toolName: "read", details: { id: "sub-9" } } },
-      { type: "message", message: { role: "toolResult", toolName: "subagent_wait", details: { entries: [] } } },
-      checkEntry("sub-1"),
-      { type: "message", message: { role: "custom", customType: "subagent-completion" } },
-      { type: "compaction" },
-    ];
-    assert.deepEqual(collectDeliveredIds(entries), new Set(["sub-1"]));
+  test("failed appends the error reason and keeps the check pointer", () => {
+    const result = baseResult({ errorMessage: "provider 429", elapsedMs: 30_000 });
+    const text = completionNoticeText("sub-2", "worker", "failed", result);
+    assert.match(text, /failed — provider 429 \(ran 30s\)/);
+    assert.match(text, /collect the result with subagent_check/);
   });
 
-  test("dedupes repeated checks of the same id", () => {
-    assert.deepEqual(collectDeliveredIds([checkEntry("sub-1"), checkEntry("sub-1")]), new Set(["sub-1"]));
+  test("cancelled keeps its recorded reason; budget stops stay partial", () => {
+    const cancelled = baseResult({ errorMessage: "no longer needed", elapsedMs: 5000 });
+    assert.match(
+      completionNoticeText("sub-3", "worker", "cancelled", cancelled),
+      /cancelled — no longer needed \(ran 5s\)/,
+    );
+    const partial = baseResult({ stopReason: "budget_exceeded", elapsedMs: 5000 });
+    assert.match(
+      completionNoticeText("sub-4", "worker", "finished", partial),
+      /finished, partial — budget exceeded \(ran 5s\)/,
+    );
   });
 
-  test("a check of a live frame never delivers (stale peek must not silence the inbox)", () => {
-    const entries = [checkEntry("sub-1", -1), checkEntry("sub-2")];
-    assert.deepEqual(collectDeliveredIds(entries), new Set(["sub-2"]));
-  });
-
-  test("empty path means nothing delivered (branch rewound past the check)", () => {
-    assert.equal(collectDeliveredIds([]).size, 0);
-  });
-
-  test("ignores malformed details", () => {
-    const entries = [
-      { type: "message", message: { role: "toolResult", toolName: "subagent_check" } },
-      { type: "message", message: { role: "toolResult", toolName: "subagent_check", details: {} } },
-      { type: "message", message: { role: "toolResult", toolName: "subagent_check", details: { id: 42 } } },
-      {
-        type: "message",
-        message: { role: "toolResult", toolName: "subagent_check", details: { id: "sub-1", result: {} } },
-      },
-    ];
-    assert.equal(collectDeliveredIds(entries).size, 0);
+  test("long tasks are previewed, never dumped", () => {
+    const result = baseResult({ task: "x".repeat(200) });
+    const text = completionNoticeText("sub-5", "worker", "finished", result);
+    assert.ok(text.length < 200);
+    assert.ok(text.endsWith("...\""));
   });
 });

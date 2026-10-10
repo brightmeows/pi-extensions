@@ -66,7 +66,6 @@ Observations on how main models behave with this plugin, one family per subsecti
 |---------|-------------|
 | `/subagent:view` | Open the live view: a tabbed overlay with a per-run activity feed and a brief detail page (inputs, files, stats), plus modal steer input for the focused run — doubles as the session's run archive. Also available as the native palette entry **Subagent: Activity View** (Ctrl+Shift+P via [`pi-command-palette`](../pi-command-palette)), which opens the view directly without needing an empty editor |
 | `/subagent:doctor` | Diagnose pi invocation, model-role resolution, configuration, and role references |
-| `/subagent:status` | List background runs and their current state |
 | `/subagent:cancel <id\|all> [reason]` | Cancel a live background run (or every live run); the optional reason is recorded with the run |
 | `/subagent:avail [role] [on\|off [duration] [reason]]` | Situational role availability (see [Role availability](#role-availability)) — bare shows the overview; `/subagent:avail reviewer off 6h quota exhausted` disables a role until its TTL lapses or it is turned back on |
 | `/subagent:avail` | Show every role's availability state and the state file location |
@@ -229,9 +228,9 @@ One parameterized command covers every role (custom role names can never collide
 /subagent:avail reviewer on                   # re-enable (manual override of TTL)
 ```
 
-The model is told through the same `context`-event reminder channel as the background-run inbox: a byte-stable `[subagent availability]` block naming the OFFLINE roles (with reason and absolute reset time) is injected before every provider call while anything is disabled, and disappears when everything is back online. Delegation itself is never blocked — the reminder is information, and the model steers itself away from OFFLINE roles. A TTL lapse takes effect on the next request, the same way.
+The model is told through an append-only session message: when any role is OFFLINE, a `[subagent availability]` announcement (with reason and absolute reset time) is appended at session start and after every `/subagent:avail` change — never injected into the cached prefix, so the provider prompt cache is never broken. A TTL lapse is picked up at the next session start or command. Delegation itself is never blocked — the announcement is information, and the model steers itself away from OFFLINE roles.
 
-State persists to `~/.pi/subagent/availability.json` and survives restarts. The file is re-read on every reminder build and command, so external edits and sibling pi instances take effect without a reload.
+State persists to `~/.pi/subagent/availability.json` and survives restarts. The file is re-read at session start and on every command, so external edits and sibling pi instances take effect without a reload.
 
 ## Usage (by the main model)
 
@@ -307,7 +306,7 @@ Example tool calls made by the main model:
 ]
 ```
 
-The main model continues its own work while these runs execute. Before each model request, the extension refreshes an inbox reminder with the status of runs whose results have not been collected. When the model needs a result from a run that has ended, it retrieves it through `subagent_check`:
+The main model continues its own work while these runs execute. When a run ends, the extension appends a completion notice message to the conversation (visible to the model and the user); the model then retrieves the result through `subagent_check`:
 
 ```json
 { "id": "sub-1" }
@@ -319,19 +318,19 @@ If the needed run is still queued or running and no independent work remains, th
 { "ids": ["sub-1"] }
 ```
 
-Once the wait returns, the model retrieves the result through `subagent_check`. The reminder supplies status information, while check provides execution details and results; a separate check is not required before waiting. `subagent_check` accepts one id per call because results can be large; `subagent_wait` can await multiple unfinished runs together.
+Once the wait returns, the model retrieves the result through `subagent_check`. `subagent_check` accepts one id per call because results can be large; `subagent_wait` can await multiple unfinished runs together.
 
 Semantics worth knowing:
 
-- **Results are pull-only for the model.** A purple completion notice is shown to the user, but nothing delivers the result to the model or wakes it up. The notice is a pure notification in the same visual family as pi's `[compaction]` card — a `[subagent] id (role) outcome` header with the bare task preview beneath, each line truncated to the terminal width — and deliberately unlike the tool rows, so it never reads as model behavior; the result itself never appears in the notice, only in `subagent_check` (model) or `/subagent:status` (user). The model collects results with `subagent_check`, using `subagent_wait` when a run has not ended yet. The inbox reminder (below) lists runs not yet collected by a terminal check on the active branch on every request, but it never pushes results.
+- **Results are pull-only for the model.** When a run ends, a completion notice is appended to the conversation as a message visible to the model and the user — it names the id, role, outcome (with reason and duration for failures and interruptions), and the task preview, and points at `subagent_check`, but it delivers no result and wakes nothing. The result itself never appears in the notice, only in `subagent_check`. In the TUI the notice renders in the same visual family as pi's `[compaction]` card — a `[subagent] id (role) outcome` header with the bare task preview beneath, each line truncated to the terminal width — and deliberately unlike the tool rows, so it never reads as model behavior. Append-only messages sit at the conversation tail, so they never break the provider prompt cache.
 - **Background runs survive turn cancellation** and are unaffected by a cancelled `subagent_wait` — cancelling the wait never cancels the runs; call `subagent_wait` or `subagent_check` again later.
-- **Idempotent check, session-tree delivery state:** `subagent_check` re-delivers a terminal result on every call, loading it from history when needed. Whether a run still needs collecting derives from the active session branch, independently of the result cache. Branching past a check entry re-arms the inbox; returning to the branch with that entry silences it again.
+- **Idempotent check:** `subagent_check` re-delivers a terminal result on every call, loading it from history when needed, including after branch navigation or compaction.
 - **Interruptions keep the partial output.** Explicit `subagent_cancel` and `/subagent:cancel` requests settle as `cancelled`. A parent-turn abort (such as Escape during foreground delegation), a child reporting an aborted run, or session shutdown settles as `aborted`. Both are terminal states alongside `finished` and `failed`; they share the yellow ⏹ TUI styling and differ in their labels. The first parent stop request retains its source and reason, and the child's final `agent_settled.aborted` flag identifies interruptions even when its last assistant message still contains a transient provider error. Stops retain the reason and any partial output for `subagent_check` and history; `subagent_wait` reports the state with usage stats. Neither state triggers a provider fallback retry or accepts further cancellation or steering.
-- **Inbox reminder:** each LLM request with outstanding background runs carries a `[background subagent runs]` reminder at a cache-stable head position. It separates **In progress — no final results available yet** (queued/running) from **Ended — results awaiting collection with subagent_check** (finished/failed/aborted/cancelled, with interruptions shown as `<state> — <reason>`). Empty sections are omitted. Live runs provide status information; only terminal runs are presented as awaiting collection. A check of a live snapshot leaves the run visible, while a terminal check removes it from the reminder on the active branch. Once every result is collected, no reminder is injected. Branch navigation derives delivery from the session tree, not registry bookkeeping.
+- **Completion notices are append-only.** Each background run appends exactly one notice when it ends (finished/failed/aborted/cancelled, with interruptions shown as `<state> — <reason>`). Notices are persisted session messages: they survive reload and reopening, never duplicate, and never mutate earlier bytes — the cached conversation prefix keeps growing.
 - **Wait has no timeout parameter.** `subagent_wait` blocks until all specified runs end. Each run's own role timeout and budgets still apply; cancelling the wait leaves the runs running.
 - Background runs share the global `maxConcurrency` gate — extra runs show up as `queued` in wait/check views.
 - **Top-level only:** nested subagents cannot delegate in the background (a subagent process exits when its task finishes, which would orphan the run).
-- With `history.enabled: true`, terminal results survive `/reload` and reopening the same session. Reload or session shutdown aborts in-flight runs and waits for their partial results to be persisted; it does not resume child processes. `/subagent:status` lists background runs from the current session's index.
+- With `history.enabled: true`, terminal results survive `/reload` and reopening the same session. Reload or session shutdown aborts in-flight runs and waits for their partial results to be persisted; it does not resume child processes. `/subagent:view` lists background runs from the current session's archive.
 
 ### Steering a running subagent
 
@@ -401,7 +400,7 @@ Every delegate run writes its terminal result to `~/.pi/subagent/history/{sessio
 
 Run ids are atomically reserved under the session history directory's `.ids/` folder before delegation, preventing concurrent instances from issuing the same id. Reservations also survive interrupted runs. If an id cannot be reserved, delegation fails before starting a child.
 
-History is the backing store; memory holds live controls and a lightweight session index. Startup scans records one at a time and retains only metadata. Terminal bodies are released after successful persistence and loaded on demand by `subagent_check` or `/subagent:view`. The shared cache holds at most one terminal result: check releases it after constructing its response, selecting another archived run replaces it, and closing the view clears it. Reminders, status listings, and waiting use metadata without loading archived bodies. Tool results already stored in the parent conversation have their own framework-managed lifetime.
+History is the backing store; memory holds live controls and a lightweight session index. Startup scans records one at a time and retains only metadata. Terminal bodies are released after successful persistence and loaded on demand by `subagent_check` or `/subagent:view`. The shared cache holds at most one terminal result: check releases it after constructing its response, selecting another archived run replaces it, and closing the view clears it. Status listings and waiting use metadata without loading archived bodies. Tool results already stored in the parent conversation have their own framework-managed lifetime.
 
 Old records are matched to delegate tool results across the session tree when possible. Legacy foreground records use `legacy-N` display ids. Legacy records contain raw output only, so oversized results are mechanically truncated when read; new records preserve the exact prepared output across reload. Invalid records and ambiguous duplicate ids are skipped with a warning; missing or unreadable result files produce a read error.
 

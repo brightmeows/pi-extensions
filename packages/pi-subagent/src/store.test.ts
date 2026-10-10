@@ -8,7 +8,6 @@ import { persistSubagentHistory, readHistoryResult } from "./history.ts";
 import { startSubagentRun, type StartRunOptions } from "./run.ts";
 import { DEFAULT_CONFIG, type SubagentResult } from "./types.ts";
 import { AsyncSemaphore, emptyUsage } from "./utils.ts";
-import { buildInboxReminder } from "./reminder.ts";
 
 function sandbox(t: { after(fn: () => void): void }): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-store-test-"));
@@ -84,10 +83,9 @@ test("the terminal cache keeps at most one loaded result and reload restores onl
   assert.equal(reads, 1);
   store.read(b); store.read(a);
   assert.equal(reads, 3);
-  const delivered = new Set(["sub-1"]);
-  assert.ok(!buildInboxReminder(store.background.values(), delivered)?.includes("- sub-1"));
-  assert.ok(buildInboxReminder(store.background.values(), new Set())?.includes("- sub-1"));
-  assert.equal(reads, 3, "inbox reads metadata only");
+  // Reading an archived run through the registry keeps the single-result
+  // cache warm without extra loads (wait/status iterate metadata the same way).
+  assert.equal(reads, 3);
   store.restore(dir, [], assert.fail);
   store.read(store.background.get("sub-1")!);
   assert.equal(reads, 4);

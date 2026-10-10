@@ -10,7 +10,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import {
   availabilityFilePath,
-  buildAvailabilityReminder,
+  availabilityMessage,
   isEntryActive,
   loadAvailability,
   parseDuration,
@@ -113,9 +113,9 @@ test("isEntryActive honors until", () => {
   assert.equal(isEntryActive(entry({ until: "2026-06-14T12:00:00.000Z" }), NOW), false);
 });
 
-// ── reminder construction ──────────────────────────────────────────────────
+// ── model-visible announcement ────────────────────────────────────────────
 
-test("buildAvailabilityReminder lists active disables in sorted order", () => {
+test("availabilityMessage lists active disables in sorted order", () => {
   const state: AvailabilityState = {
     version: 1,
     disabled: {
@@ -124,34 +124,34 @@ test("buildAvailabilityReminder lists active disables in sorted order", () => {
       stale: entry({ until: "2000-01-01T00:00:00.000Z" }),
     },
   };
-  const reminder = buildAvailabilityReminder(state, NOW);
-  assert.ok(reminder);
-  const lines = reminder!.split("\n");
+  const text = availabilityMessage(state, NOW);
+  const lines = text.split("\n");
   // Sorted: explorer before reviewer; lapsed entry absent.
   assert.ok(lines[1].startsWith("- explorer"));
   assert.ok(lines[2].startsWith("- reviewer — quota exhausted"));
-  assert.ok(!reminder!.includes("stale"));
-  assert.ok(reminder!.includes("do not delegate to them"));
+  assert.ok(!text.includes("stale"));
+  assert.ok(text.includes("do not delegate to them"));
 });
 
-test("buildAvailabilityReminder is byte-stable across calls", () => {
+test("availabilityMessage is byte-stable across calls", () => {
   const state: AvailabilityState = {
     version: 1,
     disabled: { reviewer: entry({ until: "2026-06-15T00:00:00.000Z" }) },
   };
   assert.equal(
-    buildAvailabilityReminder(state, NOW),
-    buildAvailabilityReminder(state, NOW),
+    availabilityMessage(state, NOW),
+    availabilityMessage(state, NOW),
   );
-  // Absolute timestamps only — nothing relative that would drift.
-  assert.ok(!buildAvailabilityReminder(state, NOW)!.includes("in "));
+  // Absolute timestamps only — nothing relative that would drift
+  // in a persisted message.
+  assert.ok(!availabilityMessage(state, NOW).includes("in "));
 });
 
-test("buildAvailabilityReminder is undefined when everything is online", () => {
-  assert.equal(buildAvailabilityReminder({ version: 1, disabled: {} }, NOW), undefined);
+test("availabilityMessage announces all-online when nothing is disabled", () => {
+  assert.match(availabilityMessage({ version: 1, disabled: {} }, NOW), /back online/);
   const lapsed: AvailabilityState = {
     version: 1,
     disabled: { reviewer: entry({ until: "2000-01-01T00:00:00.000Z" }) },
   };
-  assert.equal(buildAvailabilityReminder(lapsed, NOW), undefined);
+  assert.match(availabilityMessage(lapsed, NOW), /back online/);
 });

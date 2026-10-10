@@ -9,11 +9,11 @@
  * so it survives restarts; entries optionally carry a TTL (`off 6h`) after
  * which they lapse automatically.
  *
- * The model is told through the existing `context`-event reminder channel
- * (same mechanism as the background-run inbox): one byte-stable block
- * listing the OFFLINE roles, injected before every provider call. Delegation
- * itself is never blocked — the reminder is information, the model steers
- * itself.
+ * The model is told through an append-only session message published at
+ * session start and on every /subagent:avail change (see availabilityMessage):
+ * a persisted announcement listing the OFFLINE roles. Append-only messages
+ * never break the provider prompt cache. Delegation itself is never blocked —
+ * the announcement is information, the model steers itself.
  */
 
 import * as fs from "node:fs";
@@ -96,7 +96,7 @@ export function saveAvailability(filePath: string, state: AvailabilityState): vo
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
   } catch {
-    // Best-effort: the reminder reflects in-session state regardless.
+    // Best-effort: the announcement reflects in-session state regardless.
   }
 }
 
@@ -135,29 +135,28 @@ export function parseOffArgs(args: string): { durationMs?: number; reason: strin
   return { durationMs, reason: rest };
 }
 
-// ── Reminder construction ──────────────────────────────────────────────────
+// ── Model-visible announcement ──────────────────────────────────────────
 
 /**
- * The model-facing reminder block: which agent roles are OFFLINE. Absolute
- * timestamps only (an injected block must be byte-stable across requests —
- * relative wording like "in 5h" would drift). Deterministic key order.
- * Undefined when everything is online (inject nothing, cache untouched).
+ * The model-facing availability announcement, an append-only session
+ * message published at session start and whenever /subagent:avail changes
+ * state. Absolute timestamps only (a persisted message must not drift the
+ * way relative wording like "in 5h" would). Deterministic key order.
  */
-export function buildAvailabilityReminder(
-  state: AvailabilityState,
-  now: Date = new Date(),
-): string | undefined {
+export function availabilityMessage(state: AvailabilityState, now: Date = new Date()): string {
   const lines: string[] = [];
   for (const key of Object.keys(state.disabled).sort()) {
     const entry = state.disabled[key];
     if (!isEntryActive(entry, now)) continue;
     const reason = entry.reason ? ` — ${entry.reason}` : "";
-    const until = entry.until ? ` (until ${entry.until})` : "";
+    const until = entry.until ? ` (until ${entry.until})` : " (until manually re-enabled)";
     lines.push(`- ${key}${reason}${until}`);
   }
-  if (lines.length === 0) return undefined;
+  if (lines.length === 0) {
+    return "[subagent availability] All subagent roles are back online — delegate freely.";
+  }
   return [
-    `[subagent availability] These subagent roles are currently OFFLINE — do not delegate to them; the user re-enables them with /subagent:avail <role> on:`,
+    "[subagent availability] These subagent roles are currently OFFLINE — do not delegate to them; the user re-enables them with /subagent:avail <role> on:",
     ...lines,
   ].join("\n");
 }

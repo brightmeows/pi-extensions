@@ -24,7 +24,7 @@ import { BUILTIN_ROLES } from "./roles.ts";
 import { getPiInvocation } from "./spawn.ts";
 import {
   AsyncSemaphore,
-  collectDeliveredIds,
+  completionNoticeText,
   createThrottler,
   describeCurrentActivity,
   deriveRunState,
@@ -43,12 +43,11 @@ import {
   taskPreview,
 } from "./utils.ts";
 import { startSubagentRun, type RunHandle } from "./run.ts";
-import { buildInboxReminder, injectReminder } from "./reminder.ts";
 import { RunStore } from "./store.ts";
 import { historyDirectory } from "./history.ts";
 import {
   availabilityFilePath,
-  buildAvailabilityReminder,
+  availabilityMessage,
   isEntryActive,
   loadAvailability,
   parseOffArgs,
@@ -73,6 +72,7 @@ import {
 } from "./render-async.ts";
 
 const BACKGROUND_COMPLETION_MESSAGE_TYPE = "subagent-completion";
+const AVAILABILITY_MESSAGE_TYPE = "subagent-availability";
 
 // ── Extension entry ────────────────────────────────────────────────
 
@@ -167,14 +167,14 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: Subage
     void run.promise.then(() => liveRuns.delete(run));
   }
 
-  // Situational availability state file (see availability.ts). Re-read from
-  // disk on every reminder build and command so external edits and sibling
-  // pi instances are picked up without a reload.
+  // Situational availability state file (see availability.ts). Re-read at
+  // session start and on every /subagent:avail command so external edits and
+  // sibling pi instances are picked up without a reload.
   const availabilityPath = dependencies.availabilityPath ?? availabilityFilePath();
 
   // ── Situational availability commands ────────────────────────────
 
-  /** "in 5h 12m" / "in 3d" — UI display only; the reminder stays absolute. */
+  /** "in 5h 12m" / "in 3d" — UI display only; the announcement stays absolute. */
   function formatIn(target: string, now: Date): string {
     const ms = new Date(target).getTime() - now.getTime();
     if (!Number.isFinite(ms) || ms <= 0) return "expired";
@@ -197,8 +197,45 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: Subage
     return `${reason}${until}`;
   }
 
+  // ── Availability announcement (model-visible, append-only) ───────────
+
+  /** The last availability announcement on the active branch, if any. */
+  function lastAnnouncement(ctx: ExtensionContext): string | undefined {
+    const entries = ctx.sessionManager?.buildContextEntries() ?? [];
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i];
+      if (entry.type !== "custom_message") continue;
+      if (entry.customType !== AVAILABILITY_MESSAGE_TYPE) continue;
+      return typeof entry.content === "string" ? entry.content : undefined;
+    }
+    return undefined;
+  }
+
+  /**
+   * Publish the current availability snapshot as an append-only session
+   * message whenever it differs from the last announcement on the active
+   * branch. Append-only messages sit at the conversation tail and never
+   * break the provider prompt cache; the diff keeps reloads and resumes
+   * from stacking duplicates.
+   */
+  function announceAvailability(pi: ExtensionAPI, ctx: ExtensionContext): void {
+    const now = new Date();
+    const state = loadAvailability(availabilityPath);
+    const offline = Object.values(state.disabled).filter((entry) => isEntryActive(entry, now));
+    const last = lastAnnouncement(ctx);
+    // An all-online snapshot is news only when it retracts an earlier
+    // offline announcement; never open a session with an empty one.
+    if (offline.length === 0 && last === undefined) return;
+    const text = availabilityMessage(state, now);
+    if (text === last) return;
+    pi.sendMessage(
+      { customType: AVAILABILITY_MESSAGE_TYPE, content: text, display: false },
+      { triggerTurn: false },
+    );
+  }
+
   async function handleAvailabilityCommand(
-    ctx: { ui: { notify(msg: string, level: "info" | "error"): void } },
+    ctx: ExtensionContext,
     name: string,
     args: string,
   ): Promise<void> {
@@ -225,8 +262,7 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: Subage
       }
       delete state.disabled[name];
       saveAvailability(availabilityPath, state);
-      // No broadcast needed: the context reminder reflects the file on the
-      // next provider call, so the model sees the role return implicitly.
+      announceAvailability(pi, ctx);
       ctx.ui.notify(`${name} re-enabled.`, "info");
       return;
     }
@@ -244,6 +280,7 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: Subage
       const state = loadAvailability(availabilityPath);
       state.disabled[name] = entry;
       saveAvailability(availabilityPath, state);
+      announceAvailability(pi, ctx);
       ctx.ui.notify(`${name} disabled${describeEntry(entry, now)}.`, "info");
       return;
     }
@@ -392,41 +429,11 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: Subage
     // The availability command is static; registering it here keeps every
     // session-shape concern in one place (registerCommand is idempotent).
     registerAvailabilityCommand(pi);
-  });
 
-  pi.on("context", async (event, ctx) => {
-    // Completion notices are persisted custom messages so the user can see
-    // them in the transcript, but they are deliberately UI-only. Keep the
-    // model on the reminder/check path instead of duplicating the notice in
-    // its context.
-    const messages = event.messages.filter(
-      (message) =>
-        message.role !== "custom" || message.customType !== BACKGROUND_COMPLETION_MESSAGE_TYPE,
-    );
-
-    // The model's inbox: every background run not yet checked on the active
-    // branch, injected at a cache-stable head position before every provider
-    // call. Delivery state is derived from the session tree (append-only:
-    // branching away drops the check entry, branching back restores it), so
-    // the inbox re-arms itself after tree navigation. Empty inbox and no
-    // filtered notices → context stays untouched, cache fully stable.
-    // Availability rides the same cache-stable head slot as the inbox: one
-    // byte-stable block naming the OFFLINE roles, re-read from disk every
-    // call (external edits and TTL lapses take effect on the next request).
-    // Same discipline as the inbox — absolute timestamps, sorted keys,
-    // nothing injected when everything is online.
-    const availabilityReminder = buildAvailabilityReminder(loadAvailability(availabilityPath));
-    const reminder = [
-      availabilityReminder,
-      buildInboxReminder(
-        backgroundRuns.values(),
-        collectDeliveredIds(ctx.sessionManager.buildContextEntries()),
-      ),
-    ]
-      .filter((block): block is string => block !== undefined)
-      .join("\n\n") || undefined;
-    if (!reminder && messages.length === event.messages.length) return;
-    return { messages: reminder ? injectReminder(messages, reminder) : messages };
+    // Announce OFFLINE roles once per session (and after /subagent:avail
+    // changes). Append-only, diffed against the last announcement so
+    // reloads and resumes never stack duplicates.
+    announceAvailability(pi, ctx);
   });
 
   pi.on("tool_result", (event) => {
@@ -498,7 +505,7 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: Subage
         background: Type.Optional(
           Type.Boolean({
             description:
-              "Return immediately with a run id instead of waiting for the final output. Results are pull-only: a completion notice is shown to the user, but does not deliver the result to the model or wake it.",
+              "Return immediately with a run id instead of waiting for the final output. Results are pull-only: when the run ends, a completion notice message is appended to the conversation (visible to you and the user) naming the outcome, but it delivers no result and wakes nothing — collect with subagent_check.",
           }),
         ),
         cwd: Type.Optional(Type.String({ description: "Working directory (defaults to current)" })),
@@ -577,19 +584,21 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: Subage
           const runGeneration = sessionGeneration;
           void run.promise.then((result) => {
             // Never publish completions from an old session. Within a session
-            // every completion emits its UI-only notice card once — check
-            // results never suppress it (they are not LLM-visible either way).
+            // every completion appends exactly one notice; check results
+            // never suppress or duplicate it.
             if (runGeneration !== sessionGeneration) return;
 
             const outcome = deriveRunState(result);
             if (!isTerminalState(outcome)) return;
-            // Pure notification: id + outcome only. The result itself surfaces
-            // through subagent_check (model) or /subagent:status (user) — the
-            // notice never previews it.
+            // Append-only notification, visible to the model and the user:
+            // it lands at the conversation tail when the run ends and never
+            // breaks the provider prompt cache. Pure notification — the
+            // result itself surfaces through subagent_check (model) or
+            // /subagent:view (user); the notice never previews it.
             pi.sendMessage(
               {
                 customType: BACKGROUND_COMPLETION_MESSAGE_TYPE,
-                content: `Background subagent ${run.id} (${run.role}) ${outcome}: "${taskPreview(run.task)}"`,
+                content: completionNoticeText(run.id, run.role, outcome, result),
                 display: true,
                 // Structured payload for the notice renderer; the content string
                 // stays as the non-TUI fallback (export, print mode).

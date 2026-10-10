@@ -398,7 +398,7 @@ export function taskPreview(task: string): string {
  * Lines of the background-run completion notice. Bracket label + id/role +
  * outcome on the header line, the bare task preview beneath (dim). Pure
  * notification: the result itself never appears here — it surfaces through
- * subagent_check (model) or /subagent:status (user). The renderer truncates
+ * subagent_check (model) or /subagent:view (user). The renderer truncates
  * each line to the terminal width independently, so the header never falls
  * off the right edge.
  *
@@ -948,48 +948,49 @@ export function truncateOutput(t: string): string {
   return `[Output truncated — ${t.length} chars total]\n\n${head}\n\n... [truncated] ...\n\n${tail}`;
 }
 
-// ── Session-tree delivery derivation ────────────────────────
+// ── Completion notice (model-visible) ───────────────────────
 
-/**
- * Minimal structural slice of a session entry — the only fields
- * collectDeliveredIds reads. The real SessionEntry from
- * ctx.sessionManager.buildContextEntries() satisfies this shape structurally;
- * keeping it local preserves this module's zero pi-API-dependency rule and
- * lets tests build plain fakes.
- */
-interface SessionEntryLike {
-  type: string;
-  message?: {
-    role?: string;
-    toolName?: string;
-    details?: unknown;
-  };
+/** `42s`, `3m12s`, `4m` — whole seconds, no live clocks. */
+function formatDuration(totalSec: number): string {
+  if (totalSec < 60) return `${totalSec}s`;
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return s > 0 ? `${m}m${s}s` : `${m}m`;
 }
 
 /**
- * Derive the set of background-run ids already delivered by subagent_check
- * on the given session entries. The session tree is the single source of
- * truth for delivery state: it is append-only and branch navigation rebuilds
- * the active path, so branching past a check entry un-delivers (the inbox
- * re-arms) while branching back re-delivers — no mirrored state to sync.
- *
- * Only checks that returned a TERMINAL snapshot count: a peek at a live
- * frame (running/queued, exitCode -1) delivers nothing — the steer flow
- * re-checks later — so an early check can never silence the inbox before
- * the outcome exists.
+ * Status segment of the completion notice: outcome plus its stable extras
+ * (reason, budget note, duration frozen at settlement).
  */
-export function collectDeliveredIds(entries: Iterable<SessionEntryLike>): Set<string> {
-  const ids = new Set<string>();
-  for (const entry of entries) {
-    if (entry.type !== "message") continue;
-    const message = entry.message;
-    if (!message || message.role !== "toolResult" || message.toolName !== "subagent_check") continue;
-    const details = message.details as { id?: unknown; result?: { exitCode?: unknown } } | undefined;
-    if (typeof details?.id !== "string" || !details.id) continue;
-    // A malformed or live frame (exitCode -1) is not a delivery — leave the
-    // inbox armed.
-    if (typeof details.result?.exitCode !== "number" || details.result.exitCode === -1) continue;
-    ids.add(details.id);
+function noticeStatus(outcome: TerminalRunState, result: SubagentResult): string {
+  const secs = elapsedSeconds(result);
+  const ran = secs != null ? ` (ran ${formatDuration(secs)})` : "";
+  if (outcome === "cancelled" || outcome === "aborted") {
+    const reason = taskPreview(result.errorMessage || "no reason recorded");
+    return `${outcome} — ${reason}${ran}`;
   }
-  return ids;
+  if (outcome === "failed") {
+    const reason = taskPreview(result.errorMessage || result.stderr || "unknown error");
+    return `failed — ${reason}${ran}`;
+  }
+  const partial = result.stopReason === "budget_exceeded" ? ", partial — budget exceeded" : "";
+  return `finished${partial}${ran}`;
+}
+
+/**
+ * Model-visible text of the background-run completion notice. The notice is
+ * an append-only session message: it enters the conversation when a run ends
+ * and stays there. Pure notification — the result itself never appears
+ * here; the model collects it with subagent_check.
+ */
+export function completionNoticeText(
+  id: string,
+  role: string,
+  outcome: TerminalRunState,
+  result: SubagentResult,
+): string {
+  return (
+    `Background subagent ${id} (${role}) ${noticeStatus(outcome, result)} — ` +
+    `collect the result with subagent_check. Task: "${taskPreview(result.task)}"`
+  );
 }
