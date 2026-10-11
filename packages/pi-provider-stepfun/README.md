@@ -107,8 +107,8 @@ Or store it through `/login`, or manually in `~/.pi/agent/auth.json`:
 
 ```json
 {
-  "stepfun": { "apiKey": "your-api-key" },
-  "stepfun-plan": { "apiKey": "your-api-key" }
+  "stepfun": { "type": "api_key", "key": "your-api-key" },
+  "stepfun-plan": { "type": "api_key", "key": "your-api-key" }
 }
 ```
 

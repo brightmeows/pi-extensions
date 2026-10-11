@@ -2,7 +2,9 @@
  * pi-provider-stepfun
  *
  * Registers two StepFun (阶跃星辰) providers covering both billing channels,
- * both via pi's built-in openai-completions transport:
+ * each an independent complete pi-ai `Provider` (the canonical form for
+ * extensions that own discovery and stored credentials), both delegating
+ * streaming to pi's built-in openai-completions transport:
  *
  *  - `stepfun`       — pay-as-you-go  (api.stepfun.com/v1)
  *  - `stepfun-plan`  — Step Plan      (api.stepfun.com/step_plan/v1)
@@ -12,13 +14,19 @@
  *  - stepfun-plan has step-router-v1 (deepseek-v4-pro or step-3.7-flash)
  *  - step-5-preview and the three Step 3.x Flash models are shared
  *
- * Each registration refreshes its own channel catalog (`GET <base>/models`)
- * when the persisted snapshot is stale (4-hour window, matching pi's
- * built-in remote catalog); `pi update --models` forces an immediate
- * refresh. The response shape is UNVERIFIED (no API key at hand) — the
- * parser accepts the common OpenAI-compatible dialects and prefers
- * shipped specs for every field the catalog omits; on any mismatch the
- * refresh throws and pi keeps the static lists below.
+ * Authentication is pi-ai's standard `envApiKeyAuth`: a stored `/login`
+ * credential owns the channel; the ambient `STEP_API_KEY` /
+ * `STEP_PLAN_API_KEY` env vars are consulted only when nothing is stored.
+ * An unconfigured channel resolves to undefined, so model refresh silently
+ * skips it instead of reporting an error.
+ *
+ * Each channel refreshes its own catalog (`GET <base>/models`) when the
+ * persisted snapshot is stale (4-hour window, matching pi's built-in
+ * remote catalog); `pi update --models` forces an immediate refresh. The
+ * response shape is UNVERIFIED (no API key at hand) — the parser accepts
+ * the common OpenAI-compatible dialects and prefers shipped specs for
+ * every field the catalog omits; on any mismatch the refresh throws and
+ * pi keeps the static lists below.
  *
  * Compat for the original models was verified against the live API
  * (see ../../../PROVIDER.md):
@@ -36,11 +44,19 @@
  * Step 5 Preview follows the published Chat Completions contract but still
  * needs a live wire-contract check.
  */
-import type { ExtensionAPI, ProviderConfig, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
-import type { OpenAICompletionsCompat, ThinkingLevelMap } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+	envApiKeyAuth,
+	type Model,
+	type OpenAICompletionsCompat,
+	type Provider,
+	type ProviderStreamOptions,
+	type RefreshModelsContext,
+	type ThinkingLevelMap,
+} from "@earendil-works/pi-ai";
+import { stream, streamSimple } from "@earendil-works/pi-ai/compat";
 
-/** Chat-model branch of the `ProviderModelConfig` union. */
-type ChatModelConfig = Extract<ProviderModelConfig, { reasoning: boolean }>;
+type ChatModel = Model<"openai-completions">;
 
 const REFRESH_TIMEOUT_MS = 10_000;
 /** Freshness window matching pi's built-in remote catalog (4 hours). */
@@ -48,19 +64,17 @@ const REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 const STANDARD_BASE = "https://api.stepfun.com/v1";
 const PLAN_BASE = "https://api.stepfun.com/step_plan/v1";
-const API_KEY_ENV = "STEP_API_KEY";
-const PLAN_API_KEY_ENV = "STEP_PLAN_API_KEY";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
 interface ModelMeta {
-  name: string;
-  contextWindow: number;
-  maxTokens: number;
-  reasoning: boolean;
-  input: ("text" | "image")[];
-  compat?: Partial<OpenAICompletionsCompat>;
-  thinkingLevelMap?: ThinkingLevelMap;
+	name: string;
+	contextWindow: number;
+	maxTokens: number;
+	reasoning: boolean;
+	input: ("text" | "image")[];
+	compat?: Partial<OpenAICompletionsCompat>;
+	thinkingLevelMap?: ThinkingLevelMap;
 }
 
 /**
@@ -74,78 +88,78 @@ interface ModelMeta {
  * generically regardless of format.
  */
 const DEFAULT_COMPAT: OpenAICompletionsCompat = {
-  supportsDeveloperRole: true,
-  supportsReasoningEffort: true,
-  maxTokensField: "max_tokens",
+	supportsDeveloperRole: true,
+	supportsReasoningEffort: true,
+	maxTokensField: "max_tokens",
 };
 
 // Keep pi's extra thinking levels within StepFun's documented low/medium/high set.
 const THINKING_LEVELS: ThinkingLevelMap = {
-  minimal: "low",
-  low: "low",
-  medium: "medium",
-  high: "high",
-  xhigh: "high",
-  max: "high",
+	minimal: "low",
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: "high",
+	max: "high",
 };
 
 // Shared across both channels
 const SHARED_MODELS: Record<string, ModelMeta> = {
-  "step-5-preview": {
-    name: "Step 5 Preview",
-    contextWindow: 1_000_000,
-    // pi reserves maxTokens inside the context window; the API advertises
-    // up to 1M output, but using that value here would leave no input room.
-    maxTokens: 65_536,
-    reasoning: true,
-    input: ["text", "image"],
-    compat: { supportsDeveloperRole: false },
-  },
-  "step-3.7-flash": {
-    name: "Step 3.7 Flash",
-    contextWindow: 262_144,
-    maxTokens: 16_384,
-    reasoning: true,
-    input: ["text", "image"],
-  },
-  "step-3.5-flash": {
-    name: "Step 3.5 Flash",
-    contextWindow: 262_144,
-    maxTokens: 16_384,
-    reasoning: true,
-    input: ["text"],
-  },
-  // Agent/Coding-optimized snapshot of step-3.5-flash (faster, lower token use).
-  "step-3.5-flash-2603": {
-    name: "Step 3.5 Flash 2603",
-    contextWindow: 262_144,
-    maxTokens: 16_384,
-    reasoning: true,
-    input: ["text"],
-    thinkingLevelMap: { ...THINKING_LEVELS, medium: "low" },
-  },
+	"step-5-preview": {
+		name: "Step 5 Preview",
+		contextWindow: 1_000_000,
+		// pi reserves maxTokens inside the context window; the API advertises
+		// up to 1M output, but using that value here would leave no input room.
+		maxTokens: 65_536,
+		reasoning: true,
+		input: ["text", "image"],
+		compat: { supportsDeveloperRole: false },
+	},
+	"step-3.7-flash": {
+		name: "Step 3.7 Flash",
+		contextWindow: 262_144,
+		maxTokens: 16_384,
+		reasoning: true,
+		input: ["text", "image"],
+	},
+	"step-3.5-flash": {
+		name: "Step 3.5 Flash",
+		contextWindow: 262_144,
+		maxTokens: 16_384,
+		reasoning: true,
+		input: ["text"],
+	},
+	// Agent/Coding-optimized snapshot of step-3.5-flash (faster, lower token use).
+	"step-3.5-flash-2603": {
+		name: "Step 3.5 Flash 2603",
+		contextWindow: 262_144,
+		maxTokens: 16_384,
+		reasoning: true,
+		input: ["text"],
+		thinkingLevelMap: { ...THINKING_LEVELS, medium: "low" },
+	},
 };
 
 // Pay-as-you-go channel only
 const STANDARD_ONLY: Record<string, ModelMeta> = {
-  "step-1o-turbo-vision": {
-    name: "Step 1o Turbo Vision",
-    contextWindow: 32_768,
-    maxTokens: 8_192,
-    reasoning: false,
-    input: ["text", "image"],
-  },
+	"step-1o-turbo-vision": {
+		name: "Step 1o Turbo Vision",
+		contextWindow: 32_768,
+		maxTokens: 8_192,
+		reasoning: false,
+		input: ["text", "image"],
+	},
 };
 
 // Step Plan channel only; the routed engines have different context limits.
 const PLAN_ONLY: Record<string, ModelMeta> = {
-  "step-router-v1": {
-    name: "Step Router V1",
-    contextWindow: 1_048_576,
-    maxTokens: 16_384,
-    reasoning: true,
-    input: ["text"],
-  },
+	"step-router-v1": {
+		name: "Step Router V1",
+		contextWindow: 1_048_576,
+		maxTokens: 16_384,
+		reasoning: true,
+		input: ["text"],
+	},
 };
 
 // StepFun bills in CNY; like other CN providers in this repo, cost is left at 0
@@ -154,29 +168,25 @@ const COST_ZERO = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } as const;
 
 // ── Model config builder ──────────────────────────────────────────────────
 
-function buildModels(...maps: Record<string, ModelMeta>[]) {
-  const merged: Record<string, ModelMeta> = Object.assign({}, ...maps);
-  return Object.entries(merged).map(([id, m]) => ({
-    id,
-    name: m.name,
-    api: "openai-completions" as const,
-    reasoning: m.reasoning,
-    input: m.input,
-    cost: COST_ZERO,
-    contextWindow: m.contextWindow,
-    maxTokens: m.maxTokens,
-    compat: { ...DEFAULT_COMPAT, ...(m.compat ?? {}) },
-    ...(m.reasoning ? { thinkingLevelMap: m.thinkingLevelMap ?? THINKING_LEVELS } : {}),
-  }));
+function buildModels(providerId: string, baseUrl: string, ...maps: Record<string, ModelMeta>[]): ChatModel[] {
+	const merged: Record<string, ModelMeta> = Object.assign({}, ...maps);
+	return Object.entries(merged).map(([id, m]) => ({
+		id,
+		provider: providerId,
+		api: "openai-completions" as const,
+		baseUrl,
+		name: m.name,
+		reasoning: m.reasoning,
+		input: m.input,
+		cost: COST_ZERO,
+		contextWindow: m.contextWindow,
+		maxTokens: m.maxTokens,
+		compat: { ...DEFAULT_COMPAT, ...(m.compat ?? {}) },
+		...(m.reasoning ? { thinkingLevelMap: m.thinkingLevelMap ?? THINKING_LEVELS } : {}),
+	}));
 }
 
-const STANDARD_MODELS = buildModels(SHARED_MODELS, STANDARD_ONLY);
-const PLAN_MODELS = buildModels(SHARED_MODELS, PLAN_ONLY);
-
-// ── Dynamic catalog refresh ─────────────────────────────────────────────
-
-type RefreshModelsContext = Parameters<NonNullable<ProviderConfig["refreshModels"]>>[0];
-type ModelsStoreEntry = NonNullable<Parameters<RefreshModelsContext["publish"]>[0]["persist"]>;
+// ── Remote catalog ────────────────────────────────────────────────────────
 
 /**
  * `GET <base>/models` catalog entry. The response shape is unverified —
@@ -184,14 +194,14 @@ type ModelsStoreEntry = NonNullable<Parameters<RefreshModelsContext["publish"]>[
  * specs for anything the catalog omits.
  */
 interface RemoteModel {
-  id: string;
-  name?: string;
-  context_length?: number | null;
-  context_window?: number | null;
-  max_output_length?: number | null;
-  max_output?: number | null;
-  input_modalities?: string[];
-  output_modalities?: string[];
+	id: string;
+	name?: string;
+	context_length?: number | null;
+	context_window?: number | null;
+	max_output_length?: number | null;
+	max_output?: number | null;
+	input_modalities?: string[];
+	output_modalities?: string[];
 }
 
 const DEFAULT_CONTEXT_WINDOW = 262_144;
@@ -199,192 +209,202 @@ const DEFAULT_MAX_TOKENS = 16_384;
 
 /** Chat models only, when the catalog carries modality info. */
 function isChatModel(model: RemoteModel): boolean {
-  const output = model.output_modalities;
-  if (Array.isArray(output)) return output.includes("text");
-  return true; // no modality info — no id-prefix families are known here
+	const output = model.output_modalities;
+	if (Array.isArray(output)) return output.includes("text");
+	return true; // no modality info — no id-prefix families are known here
 }
 
-function remoteToChatConfig(model: RemoteModel, knownById: Map<string, ChatModelConfig>): ChatModelConfig {
-  const known = knownById.get(model.id);
-  const ctx = [model.context_length, model.context_window].find((v) => typeof v === "number");
-  const out = [model.max_output_length, model.max_output].find((v) => typeof v === "number");
-  return {
-    id: model.id,
-    name: model.name || known?.name || model.id,
-    reasoning: known?.reasoning ?? true,
-    input: (model.input_modalities ?? known?.input ?? ["text"]).filter(
-      (m) => m === "text" || m === "image",
-    ) as ("text" | "image")[],
-    cost: COST_ZERO,
-    contextWindow: ctx ?? known?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
-    maxTokens: out ?? known?.maxTokens ?? DEFAULT_MAX_TOKENS,
-    ...((known?.reasoning ?? true) ? { thinkingLevelMap: known?.thinkingLevelMap ?? THINKING_LEVELS } : {}),
-    compat: known?.compat ?? DEFAULT_COMPAT,
-  };
-}
-
-/** Convert a persisted catalog entry (pi model objects) back to chat configs. */
-function storedToChatConfigs(
-  models: readonly unknown[],
-  knownById: Map<string, ChatModelConfig>,
-): ChatModelConfig[] {
-  const configs: ChatModelConfig[] = [];
-  for (const raw of models) {
-    if (!raw || typeof raw !== "object") continue;
-    const m = raw as Record<string, unknown>;
-    if (m.type !== undefined && m.type !== "chat") continue; // image/classifier entries
-    const id = typeof m.id === "string" ? m.id : "";
-    if (!id) continue;
-    const known = knownById.get(id);
-    configs.push({
-      id,
-      name: typeof m.name === "string" ? m.name : (known?.name ?? id),
-      reasoning: typeof m.reasoning === "boolean" ? m.reasoning : (known?.reasoning ?? true),
-      input: (Array.isArray(m.input) ? m.input : (known?.input ?? ["text"])) as ("text" | "image")[],
-      cost: COST_ZERO,
-      contextWindow: typeof m.contextWindow === "number" ? m.contextWindow : (known?.contextWindow ?? DEFAULT_CONTEXT_WINDOW),
-      maxTokens: typeof m.maxTokens === "number" ? m.maxTokens : (known?.maxTokens ?? DEFAULT_MAX_TOKENS),
-      ...((typeof m.reasoning === "boolean" ? m.reasoning : (known?.reasoning ?? true))
-        ? { thinkingLevelMap: (m.thinkingLevelMap ?? known?.thinkingLevelMap ?? THINKING_LEVELS) as ChatModelConfig["thinkingLevelMap"] }
-        : {}),
-      compat: (m.compat ?? known?.compat ?? DEFAULT_COMPAT) as ChatModelConfig["compat"],
-    });
-  }
-  return configs;
-}
-
-async function fetchRemoteCatalog(
-  modelsUrl: string,
-  providerId: string,
-  apiKeyEnv: string,
-  signal: AbortSignal,
-  apiKey: string | undefined,
-): Promise<RemoteModel[]> {
-  if (!apiKey) throw new Error(`${apiKeyEnv} is not configured for ${providerId}`);
-  const controller = new AbortController();
-  const onAbort = () => controller.abort();
-  const timer = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS);
-  if (signal.aborted) controller.abort();
-  else signal.addEventListener("abort", onAbort, { once: true });
-  try {
-    const response = await fetch(modelsUrl, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`StepFun ${modelsUrl} returned HTTP ${response.status}`);
-    }
-    const body = (await response.json()) as { data?: RemoteModel[] };
-    if (!Array.isArray(body?.data)) {
-      throw new Error(`StepFun ${modelsUrl} returned an unexpected response shape`);
-    }
-    return body.data;
-  } finally {
-    clearTimeout(timer);
-    signal.removeEventListener("abort", onAbort);
-  }
+function remoteToChatModel(
+	model: RemoteModel,
+	knownById: Map<string, ChatModel>,
+	providerId: string,
+	baseUrl: string,
+): ChatModel {
+	const known = knownById.get(model.id);
+	const ctx = [model.context_length, model.context_window].find((v) => typeof v === "number");
+	const out = [model.max_output_length, model.max_output].find((v) => typeof v === "number");
+	return {
+		id: model.id,
+		provider: providerId,
+		api: "openai-completions",
+		baseUrl: baseUrl,
+		name: model.name || known?.name || model.id,
+		reasoning: known?.reasoning ?? true,
+		input: (model.input_modalities ?? known?.input ?? ["text"]).filter(
+			(m) => m === "text" || m === "image",
+		) as ("text" | "image")[],
+		cost: COST_ZERO,
+		contextWindow: ctx ?? known?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+		maxTokens: out ?? known?.maxTokens ?? DEFAULT_MAX_TOKENS,
+		...((known?.reasoning ?? true)
+			? { thinkingLevelMap: known?.thinkingLevelMap ?? THINKING_LEVELS }
+			: {}),
+		compat: known?.compat ?? DEFAULT_COMPAT,
+	};
 }
 
 /**
- * Two-phase refresh driven by pi on startup, per registration (each channel
- * has its own base URL, credential and catalog):
- *
- * - Offline phase (`allowNetwork: false`): restore the persisted catalog
- *   when present, otherwise leave the channel's static list in place.
- * - Network phase (`allowNetwork: true`): skip the fetch while the
- *   persisted snapshot is younger than `REFRESH_INTERVAL_MS` (parity with
- *   pi's built-in remote catalog); `force` (e.g. `pi update --models`)
- *   bypasses the window. On failure pi keeps the previous list.
+ * Whether a persisted entry is one of this channel's chat models. Entries
+ * written before the complete-provider rewrite (no provider/api stamps)
+ * fail this check and are dropped by the restore phase.
  */
-function makeRefreshModels(options: {
-  baseUrl: string;
-  providerId: string;
-  apiKeyEnv: string;
-  fallback: ChatModelConfig[];
-}) {
-  const modelsUrl = `${options.baseUrl}/models`;
-  const knownById = new Map(options.fallback.map((m) => [m.id, m]));
-  const restoreStored = (context: RefreshModelsContext): ChatModelConfig[] => {
-    const stored = context.stored?.models;
-    return stored?.length ? storedToChatConfigs(stored, knownById) : options.fallback;
-  };
-  return async function refreshModels(context: RefreshModelsContext): Promise<ChatModelConfig[]> {
-    if (!context.allowNetwork) {
-      // Cache-only phase: restore the persisted catalog when present;
-      // otherwise keep the static fallback (re-applying it is a no-op).
-      return restoreStored(context);
-    }
-
-    const checkedAt = context.stored?.checkedAt;
-    if (
-      !context.force &&
-      typeof checkedAt === "number" &&
-      Date.now() - checkedAt < REFRESH_INTERVAL_MS
-    ) {
-      // Fresh snapshot: skip the network round-trip and keep the restored
-      // list.
-      return restoreStored(context);
-    }
-
-    const apiKey = context.credential?.type === "api_key" ? context.credential.key : undefined;
-    const remote = await fetchRemoteCatalog(modelsUrl, options.providerId, options.apiKeyEnv, context.signal, apiKey);
-    // pi discards the returned list once the signal is aborted, but the
-    // type requires an array; returning the fallback is harmless.
-    if (context.signal.aborted) return options.fallback;
-
-    const models = remote.filter(isChatModel).map((m) => remoteToChatConfig(m, knownById));
-    if (models.length === 0) {
-      // A chat-empty catalog is almost certainly an API anomaly; rejecting
-      // it lets pi keep the previous list instead of registering nothing.
-      throw new Error(`StepFun ${modelsUrl} returned no chat models`);
-    }
-
-    await context.publish({
-      persist: {
-        models: models as unknown as ModelsStoreEntry["models"],
-        checkedAt: Date.now(),
-      },
-    });
-
-    return models;
-  };
+function isOwnChatModel(raw: unknown, providerId: string): raw is ChatModel {
+	if (!raw || typeof raw !== "object") return false;
+	const m = raw as Record<string, unknown>;
+	return (
+		m.provider === providerId &&
+		m.api === "openai-completions" &&
+		(m.type === undefined || m.type === "chat") &&
+		typeof m.id === "string" &&
+		m.id !== ""
+	);
 }
 
-const refreshStandard = makeRefreshModels({
-  baseUrl: STANDARD_BASE,
-  providerId: "stepfun",
-  apiKeyEnv: API_KEY_ENV,
-  fallback: STANDARD_MODELS,
-});
-const refreshPlan = makeRefreshModels({
-  baseUrl: PLAN_BASE,
-  providerId: "stepfun-plan",
-  apiKeyEnv: PLAN_API_KEY_ENV,
-  fallback: PLAN_MODELS,
-});
+async function fetchRemoteCatalog(
+	modelsUrl: string,
+	providerId: string,
+	apiKeyEnv: string,
+	signal: AbortSignal,
+	apiKey: string | undefined,
+): Promise<RemoteModel[]> {
+	if (!apiKey) throw new Error(`${apiKeyEnv} is not configured for ${providerId}`);
+	const controller = new AbortController();
+	const onAbort = () => controller.abort();
+	const timer = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS);
+	if (signal.aborted) controller.abort();
+	else signal.addEventListener("abort", onAbort, { once: true });
+	try {
+		const response = await fetch(modelsUrl, {
+			headers: { Authorization: `Bearer ${apiKey}` },
+			signal: controller.signal,
+		});
+		if (!response.ok) {
+			throw new Error(`StepFun ${modelsUrl} returned HTTP ${response.status}`);
+		}
+		const body = (await response.json()) as { data?: RemoteModel[] };
+		if (!Array.isArray(body?.data)) {
+			throw new Error(`StepFun ${modelsUrl} returned an unexpected response shape`);
+		}
+		return body.data;
+	} finally {
+		clearTimeout(timer);
+		signal.removeEventListener("abort", onAbort);
+	}
+}
+
+// ── Channel provider factory ──────────────────────────────────────────────
+
+interface ChannelOptions {
+	id: string;
+	name: string;
+	baseUrl: string;
+	apiKeyEnv: string;
+	baseline: ChatModel[];
+}
+
+/**
+ * One provider per billing channel, each with its own registration, auth,
+ * credential env var, base URL, and catalog state. The refresh contract
+ * follows pi-ai's dynamic providers:
+ *
+ * - Restore phase (both passes): reinstall the persisted snapshot when
+ *   present; a snapshot with no readable entries is dropped (`persist:
+ *   null`) so this pass refetches instead of idling out the window.
+ * - Network phase: skip the fetch while the snapshot is younger than
+ *   `REFRESH_INTERVAL_MS` unless `force` (e.g. `pi update --models`);
+ *   otherwise fetch, persist a snapshot for offline startups, and replace
+ *   the live list. On failure throw — pi keeps the previous list and
+ *   reports the failed provider.
+ */
+function makeChannelProvider(channel: ChannelOptions): Provider<"openai-completions"> {
+	let dynamicModels: readonly ChatModel[] | undefined;
+	const modelsUrl = `${channel.baseUrl}/models`;
+	const knownById = new Map(channel.baseline.map((m) => [m.id, m]));
+
+	const provider: Provider<"openai-completions"> = {
+		id: channel.id,
+		name: channel.name,
+		baseUrl: channel.baseUrl,
+		// Standard pi-ai auth: a stored (/login) credential wins; otherwise
+		// the ambient env var; unconfigured resolves to undefined so refresh
+		// skips this channel silently.
+		auth: { apiKey: envApiKeyAuth(`${channel.name} API key`, [channel.apiKeyEnv]) },
+		getModels: () => dynamicModels ?? channel.baseline,
+		refreshModels: async (context: RefreshModelsContext) => {
+			const stored = context.stored;
+			const restored = (stored?.models ?? []).filter((m) => isOwnChatModel(m, channel.id));
+			const usable = restored.length > 0;
+			if (
+				stored &&
+				!(await context.publish({ update: () => {
+					dynamicModels = usable ? restored : channel.baseline;
+				} }))
+			) {
+				return;
+			}
+			if (stored?.models.length && !usable) {
+				// Pre-rewrite snapshot shape: nothing readable — drop it so this
+				// pass refetches instead of idling out the freshness window.
+				if (!(await context.publish({ persist: null }))) return;
+			}
+			if (!context.allowNetwork || context.signal.aborted) return;
+			if (
+				!context.force &&
+				usable &&
+				typeof stored?.checkedAt === "number" &&
+				Date.now() - stored.checkedAt < REFRESH_INTERVAL_MS
+			) {
+				return;
+			}
+
+			const apiKey = context.credential?.type === "api_key" ? context.credential.key : undefined;
+			const remote = await fetchRemoteCatalog(modelsUrl, channel.id, channel.apiKeyEnv, context.signal, apiKey);
+			if (context.signal.aborted) return;
+
+			const models = remote
+				.filter(isChatModel)
+				.map((m) => remoteToChatModel(m, knownById, channel.id, channel.baseUrl));
+			if (models.length === 0) {
+				// A chat-empty catalog is almost certainly an API anomaly; rejecting
+				// it lets pi keep the previous list instead of registering nothing.
+				throw new Error(`StepFun ${modelsUrl} returned no chat models`);
+			}
+
+			await context.publish({
+				persist: { models, checkedAt: Date.now() },
+				update: () => {
+					dynamicModels = models;
+				},
+			});
+		},
+		stream: (model, context, options) => stream(model, context, options as ProviderStreamOptions),
+		streamSimple: (model, context, options) => streamSimple(model, context, options),
+	};
+	return provider;
+}
 
 // ── Entry point ───────────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
-  // Pay-as-you-go channel
-  pi.registerProvider("stepfun", {
-    name: "StepFun",
-    baseUrl: STANDARD_BASE,
-    apiKey: `$${API_KEY_ENV}`,
-    api: "openai-completions",
-    authHeader: true,
-    models: STANDARD_MODELS,
-    refreshModels: refreshStandard,
-  });
+	// Pay-as-you-go channel
+	pi.registerProvider(
+		makeChannelProvider({
+			id: "stepfun",
+			name: "StepFun",
+			baseUrl: STANDARD_BASE,
+			apiKeyEnv: "STEP_API_KEY",
+			baseline: buildModels("stepfun", STANDARD_BASE, SHARED_MODELS, STANDARD_ONLY),
+		}),
+	);
 
-  // Step Plan subscription channel (adds step-router-v1)
-  pi.registerProvider("stepfun-plan", {
-    name: "StepFun (Step Plan)",
-    baseUrl: PLAN_BASE,
-    apiKey: `$${PLAN_API_KEY_ENV}`,
-    api: "openai-completions",
-    authHeader: true,
-    models: PLAN_MODELS,
-    refreshModels: refreshPlan,
-  });
+	// Step Plan subscription channel (adds step-router-v1)
+	pi.registerProvider(
+		makeChannelProvider({
+			id: "stepfun-plan",
+			name: "StepFun (Step Plan)",
+			baseUrl: PLAN_BASE,
+			apiKeyEnv: "STEP_PLAN_API_KEY",
+			baseline: buildModels("stepfun-plan", PLAN_BASE, SHARED_MODELS, PLAN_ONLY),
+		}),
+	);
 }

@@ -49,7 +49,7 @@ export SENSENOVA_API_KEY="sk-..."
 Or use `/login` in pi to store it in `~/.pi/agent/auth.json`:
 
 ```json
-{ "sensenova-plan": { "apiKey": "sk-..." } }
+{ "sensenova-plan": { "type": "api_key", "key": "sk-..." } }
 ```
 
 ## Getting an API Key

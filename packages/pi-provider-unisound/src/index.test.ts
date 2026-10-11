@@ -3,277 +3,284 @@ import { test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import register from "./index.ts";
 
-interface ChatModelLike {
-  id: string;
-  name: string;
-  reasoning: boolean;
-  input: string[];
-  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
-  contextWindow: number;
-  maxTokens: number;
-  thinkingLevelMap?: Record<string, string | null>;
-  compat?: { supportsReasoningEffort?: boolean; thinkingFormat?: string };
+interface ModelLike {
+	id: string;
+	provider: string;
+	api: string;
+	baseUrl: string;
+	name: string;
+	reasoning: boolean;
+	input: string[];
+	cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+	contextWindow: number;
+	maxTokens: number;
+	thinkingLevelMap?: Record<string, string | null>;
+	compat?: Record<string, unknown>;
+}
+
+interface PublicationLike {
+	persist?: { models?: unknown[]; checkedAt?: number } | null;
+	update?: () => void;
 }
 
 interface RefreshContextLike {
-  allowNetwork: boolean;
-  force?: boolean;
-  stored?: { models?: unknown[]; checkedAt?: number };
-  credential?: { type: "api_key" | "oauth"; key?: string };
-  signal: AbortSignal;
-  publish: (publication: unknown) => Promise<boolean>;
+	allowNetwork: boolean;
+	stored?: { models?: unknown[]; checkedAt?: number };
+	force?: boolean;
+	credential?: { type: "api_key" | "oauth"; key?: string };
+	signal: AbortSignal;
+	publish: (publication: PublicationLike) => Promise<boolean>;
 }
 
-interface RegisteredProvider {
-  name: string;
-  baseUrl: string;
-  apiKey: string;
-  api: string;
-  authHeader: boolean;
-  models: ChatModelLike[];
-  refreshModels?: (context: RefreshContextLike) => Promise<ChatModelLike[]>;
+interface AuthResolveArgs {
+	ctx: { env: (name: string) => Promise<string | undefined> };
+	credential?: { type: string; key?: string };
+	signal: AbortSignal;
 }
 
-function registeredConfig(): Record<string, RegisteredProvider> {
-  const providers: Record<string, RegisteredProvider> = {};
-  register({
-    registerProvider(id: string, config: RegisteredProvider) {
-      providers[id] = config;
-    },
-  } as unknown as ExtensionAPI);
-  return providers;
+interface ProviderLike {
+	id: string;
+	name: string;
+	baseUrl: string;
+	auth: {
+		apiKey: {
+			name: string;
+			resolve: (args: AuthResolveArgs) => Promise<{ auth: { apiKey: string }; source: string } | undefined>;
+		};
+	};
+	getModels(): ModelLike[];
+	refreshModels?: (context: RefreshContextLike) => Promise<void>;
 }
 
-function makeContext(overrides: Partial<RefreshContextLike> = {}): RefreshContextLike {
-  return {
-    allowNetwork: false,
-    credential: { type: "api_key", key: "sk-test" },
-    signal: new AbortController().signal,
-    publish: async () => true,
-    ...overrides,
-  };
+function registeredProviders(): Record<string, ProviderLike> {
+	const providers: Record<string, ProviderLike> = {};
+	register({
+		registerProvider(provider: ProviderLike) {
+			providers[provider.id] = provider;
+		},
+	} as unknown as ExtensionAPI);
+	assert.deepEqual(Object.keys(providers).sort(), ["unisound", "unisound-plan"]);
+	return providers;
 }
 
-// Shape returned by GET /v1/models (verified live 2026-10-10): ids plus
-// context_window/max_output; u2-med reports a null max_output.
+function makeRefreshContext(overrides: Partial<RefreshContextLike> = {}) {
+	const publications: PublicationLike[] = [];
+	const context: RefreshContextLike = {
+		allowNetwork: false,
+		credential: { type: "api_key", key: "sk-test" },
+		signal: new AbortController().signal,
+		publish: async (publication) => {
+			publications.push(publication);
+			publication.update?.();
+			return true;
+		},
+		...overrides,
+	};
+	return { context, publications };
+}
+
+const BASE_URL = "https://maas-api.unisound.com/v1";
+
 const LIVE_CATALOG = {
-  data: [
-    { id: "glm-5.2", context_window: 1_048_576, max_output: 131_072 },
-    { id: "u2-flash", context_window: 524_288, max_output: 131_072 },
-    { id: "u2-med", context_window: 262_144, max_output: null },
-    { id: "brand-new-model", context_window: 999_999, max_output: 88_888 },
-  ],
+	data: [
+		// Catalog values override shipped specs.
+		{ id: "u2-flash", context_window: 400_000, max_output: 100_000 },
+		// No metadata → shipped specs fill the gaps.
+		{ id: "kimi-k3" },
+		// New model unknown to the shipped table → generic defaults.
+		{ id: "future-model-x", context_window: 300_000, max_output: 32_000 },
+	],
 };
 
 /** A persisted chat entry as written by a previous successful refresh. */
-const STORED_CHAT_MODEL = {
-  id: "u2-flash",
-  name: "U2 Flash",
-  reasoning: true,
-  input: ["text"],
-  cost: { input: 0.14, output: 0.28, cacheRead: 0.03, cacheWrite: 0 },
-  contextWindow: 524_288,
-  maxTokens: 131_072,
-};
-
-async function withFetchStub(response: unknown, run: () => Promise<void>): Promise<void> {
-  const original = globalThis.fetch;
-  globalThis.fetch = async () =>
-    ({ ok: true, status: 200, json: async () => response }) as unknown as Response;
-  try {
-    await run();
-  } finally {
-    globalThis.fetch = original;
-  }
+function storedChatModel(providerId: string, id: string, cost: ModelLike["cost"]): ModelLike {
+	return {
+		id,
+		provider: providerId,
+		api: "openai-completions",
+		baseUrl: BASE_URL,
+		name: id,
+		reasoning: true,
+		input: ["text"],
+		cost,
+		contextWindow: 262_144,
+		maxTokens: 65_536,
+	};
 }
 
-test("registers both channels with the shared catalog and refresh hooks", () => {
-  const providers = registeredConfig();
-  const payg = providers["unisound"];
-  const plan = providers["unisound-plan"];
-  assert.ok(payg && plan);
-  assert.equal(payg.baseUrl, "https://maas-api.unisound.com/v1");
-  assert.equal(payg.apiKey, "$UNISOUND_API_KEY");
-  assert.equal(plan.apiKey, "$UNISOUND_PLAN_API_KEY");
-  assert.equal(typeof payg.refreshModels, "function");
-  assert.equal(typeof plan.refreshModels, "function");
-  assert.equal(payg.models.length, 22);
-  assert.deepEqual(
-    plan.models.map((m) => m.id),
-    payg.models.map((m) => m.id),
-  );
-  // Channel costs differ: u2-flash is metered on payg, zero on plan.
-  const flashPayg = payg.models.find((m) => m.id === "u2-flash");
-  const flashPlan = plan.models.find((m) => m.id === "u2-flash");
-  assert.equal(flashPayg?.cost.input, 0.14);
-  assert.equal(flashPlan?.cost.input, 0);
-  // u2-radimed is delisted (absent from the live catalog).
-  assert.ok(!payg.models.some((m) => m.id === "u2-radimed"));
+async function withFetchStub(response: unknown, run: () => Promise<void>): Promise<void> {
+	const original = globalThis.fetch;
+	globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => response }) as unknown as Response;
+	try {
+		await run();
+	} finally {
+		globalThis.fetch = original;
+	}
+}
+
+test("registers two independent complete providers with channel-specific costs", () => {
+	const providers = registeredProviders();
+	const payg = providers["unisound"]!;
+	const plan = providers["unisound-plan"]!;
+
+	assert.equal(payg.name, "Unisound MaaS");
+	assert.equal(payg.baseUrl, BASE_URL);
+	assert.equal(plan.name, "Unisound MaaS (Token Plan)");
+
+	const paygFlash = payg.getModels().find((m) => m.id === "u2-flash")!;
+	assert.deepEqual(paygFlash.cost, { input: 0.14, output: 0.28, cacheRead: 0.03, cacheWrite: 0 });
+	const planFlash = plan.getModels().find((m) => m.id === "u2-flash")!;
+	assert.deepEqual(planFlash.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+
+	// Same platform model set on both channels, stamped per channel.
+	assert.deepEqual(
+		payg.getModels().map((m) => m.id).sort(),
+		plan.getModels().map((m) => m.id).sort(),
+	);
+	for (const model of payg.getModels()) assert.equal(model.provider, "unisound");
+	for (const model of plan.getModels()) assert.equal(model.provider, "unisound-plan");
 });
 
-test("offline phase without a stored catalog keeps the channel fallback", async () => {
-  const providers = registeredConfig();
-  const payg = await providers["unisound"].refreshModels?.(makeContext({ allowNetwork: false }));
-  const plan = await providers["unisound-plan"].refreshModels?.(makeContext({ allowNetwork: false }));
-  assert.equal(payg?.length, 22);
-  assert.equal(plan?.length, 22);
-  assert.equal(plan?.[0].cost.input, 0);
+test("each channel resolves its own ambient env var and skips silently when unconfigured", async () => {
+	const providers = registeredProviders();
+	const env = async (name: string) =>
+		name === "UNISOUND_PLAN_API_KEY" ? "sk-plan-env" : name === "UNISOUND_API_KEY" ? "sk-payg-env" : undefined;
+	for (const [id, expected] of [
+		["unisound", "sk-payg-env"],
+		["unisound-plan", "sk-plan-env"],
+	] as const) {
+		const provider = providers[id]!;
+		assert.equal(
+			await provider.auth.apiKey.resolve({ ctx: { env: async () => undefined }, signal: new AbortController().signal }),
+			undefined,
+		);
+		assert.equal(
+			(await provider.auth.apiKey.resolve({ ctx: { env }, signal: new AbortController().signal }))?.auth.apiKey,
+			expected,
+		);
+	}
 });
 
-test("offline phase restores a persisted catalog and skips non-chat entries", async () => {
-  const providers = registeredConfig();
-  const stored = [STORED_CHAT_MODEL, { id: "had-image-entry", type: "image", input: ["text"] }];
-  const payg = await providers["unisound"].refreshModels?.(
-    makeContext({ allowNetwork: false, stored: { models: stored } }),
-  );
-  assert.deepEqual(
-    payg?.map((m) => m.id),
-    ["u2-flash"],
-  );
-  assert.equal(payg?.[0].contextWindow, 524_288);
-  assert.equal(payg?.[0].cost.input, 0.14);
-  // Plan restore re-resolves subscription cost even if the snapshot was
-  // written by the payg channel.
-  const plan = await providers["unisound-plan"].refreshModels?.(
-    makeContext({ allowNetwork: false, stored: { models: stored } }),
-  );
-  assert.equal(plan?.[0].cost.input, 0);
+test("network phase maps the catalog with channel costs and publishes a snapshot", async () => {
+	const providers = registeredProviders();
+	const payg = makeRefreshContext({ allowNetwork: true });
+	await withFetchStub(LIVE_CATALOG, () => providers["unisound"]!.refreshModels!(payg.context));
+	const paygModels = payg.publications.at(-1)!.persist!.models as ModelLike[];
+	assert.equal(typeof payg.publications.at(-1)!.persist!.checkedAt, "number");
+	assert.deepEqual(
+		paygModels.map((m) => m.id).sort(),
+		["future-model-x", "kimi-k3", "u2-flash"],
+	);
+	// Catalog numbers win; channel costs apply.
+	const flash = paygModels.find((m) => m.id === "u2-flash")!;
+	assert.equal(flash.contextWindow, 400_000);
+	assert.equal(flash.maxTokens, 100_000);
+	assert.equal(flash.cost.input, 0.14);
+	// Known id without metadata → shipped specs (kimi-k3: 1M/1M image-input).
+	const kimi = paygModels.find((m) => m.id === "kimi-k3")!;
+	assert.equal(kimi.contextWindow, 1_048_576);
+	assert.equal(kimi.maxTokens, 1_048_576);
+	assert.deepEqual(kimi.input, ["text", "image"]);
+
+	const plan = makeRefreshContext({ allowNetwork: true });
+	await withFetchStub(LIVE_CATALOG, () => providers["unisound-plan"]!.refreshModels!(plan.context));
+	const planModels = plan.publications.at(-1)!.persist!.models as ModelLike[];
+	assert.equal(planModels.find((m) => m.id === "u2-flash")!.cost.input, 0);
+	for (const model of planModels) assert.equal(model.provider, "unisound-plan");
 });
 
-test("network phase maps catalog limits and fills gaps from shipped specs", async () => {
-  const providers = registeredConfig();
-  const publications: unknown[] = [];
-  await withFetchStub(LIVE_CATALOG, async () => {
-    const result = await providers["unisound"].refreshModels?.(
-      makeContext({
-        allowNetwork: true,
-        publish: async (publication) => {
-          publications.push(publication);
-          return true;
-        },
-      }),
-    );
-    assert.deepEqual(
-      result?.map((m) => m.id),
-      ["glm-5.2", "u2-flash", "u2-med", "brand-new-model"],
-    );
-    // Catalog limits win.
-    assert.equal(result?.[0].contextWindow, 1_048_576);
-    assert.equal(result?.[0].maxTokens, 131_072);
-    // Null max_output falls back to the shipped placeholder.
-    const med = result?.find((m) => m.id === "u2-med");
-    assert.equal(med?.maxTokens, 65_536);
-    assert.equal(med?.compat?.supportsReasoningEffort, true);
-    // Unknown ids get family defaults (toggle contract, no effort).
-    const brand = result?.find((m) => m.id === "brand-new-model");
-    assert.equal(brand?.contextWindow, 999_999); // catalog value still wins
-    assert.equal(brand?.maxTokens, 88_888);
-    assert.equal(brand?.compat?.supportsReasoningEffort, false);
-    assert.equal(brand?.thinkingLevelMap?.high, "enabled");
-  });
-  assert.equal(publications.length, 1);
-  const persist = (publications[0] as { persist?: { models?: unknown[]; checkedAt?: number } })
-    .persist;
-  assert.ok(persist);
-  assert.equal(typeof persist.checkedAt, "number");
-  assert.equal(persist.models?.length, 4);
+test("restore phase re-resolves channel costs from the shipped table", async () => {
+	const providers = registeredProviders();
+	// A plan snapshot whose persisted cost predates a channel-cost change.
+	const stale = makeRefreshContext({
+		stored: {
+			models: [storedChatModel("unisound-plan", "u2-flash", { input: 0.14, output: 0.28, cacheRead: 0.03, cacheWrite: 0 })],
+			checkedAt: Date.now(),
+		},
+	});
+	await providers["unisound-plan"]!.refreshModels!(stale.context);
+	assert.deepEqual(providers["unisound-plan"]!.getModels()[0]!.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+
+	// A payg snapshot with a stale zero cost picks the PAYG table back up.
+	const payg = makeRefreshContext({
+		stored: { models: [storedChatModel("unisound", "u2-flash", { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })], checkedAt: Date.now() },
+	});
+	await providers["unisound"]!.refreshModels!(payg.context);
+	assert.equal(providers["unisound"]!.getModels()[0]!.cost.input, 0.14);
 });
 
-test("network phase skips fetching while the persisted snapshot is fresh", async () => {
-  const providers = registeredConfig();
-  const refreshModels = providers["unisound"].refreshModels;
-  assert.ok(refreshModels);
-  const original = globalThis.fetch;
-  let fetchCalled = false;
-  let published = false;
-  globalThis.fetch = async () => {
-    fetchCalled = true;
-    return { ok: true, json: async () => LIVE_CATALOG } as unknown as Response;
-  };
-  try {
-    const result = await refreshModels(
-      makeContext({
-        allowNetwork: true,
-        stored: { models: [STORED_CHAT_MODEL], checkedAt: Date.now() },
-        publish: async () => {
-          published = true;
-          return true;
-        },
-      }),
-    );
-    assert.equal(fetchCalled, false);
-    assert.equal(published, false);
-    assert.deepEqual(
-      result.map((m) => m.id),
-      ["u2-flash"],
-    );
-  } finally {
-    globalThis.fetch = original;
-  }
-});
-
-test("forced refresh bypasses the freshness window", async () => {
-  const providers = registeredConfig();
-  await withFetchStub(LIVE_CATALOG, async () => {
-    const result = await providers["unisound"].refreshModels?.(
-      makeContext({
-        allowNetwork: true,
-        force: true,
-        stored: { models: [STORED_CHAT_MODEL], checkedAt: Date.now() },
-      }),
-    );
-    assert.deepEqual(
-      result?.map((m) => m.id),
-      ["glm-5.2", "u2-flash", "u2-med", "brand-new-model"],
-    );
-  });
+test("restore phase drops foreign or pre-rewrite entries and refetches", async () => {
+	const providers = registeredProviders();
+	const { context, publications } = makeRefreshContext({
+		allowNetwork: true,
+		stored: { models: [storedChatModel("unisound", "u2-flash", { input: 0.14, output: 0.28, cacheRead: 0.03, cacheWrite: 0 })], checkedAt: Date.now() },
+	});
+	await withFetchStub(LIVE_CATALOG, () => providers["unisound-plan"]!.refreshModels!(context));
+	assert.equal(publications.filter((p) => p.persist !== undefined)[0]!.persist, null);
+	assert.ok(providers["unisound-plan"]!.getModels().some((m) => m.id === "kimi-k3"));
 });
 
 test("network phase fails fast when no API key credential is available", async () => {
-  const providers = registeredConfig();
-  const refreshModels = providers["unisound"].refreshModels;
-  assert.ok(refreshModels);
-  const original = globalThis.fetch;
-  let fetchCalled = false;
-  globalThis.fetch = async () => {
-    fetchCalled = true;
-    return { ok: true, json: async () => LIVE_CATALOG } as unknown as Response;
-  };
-  try {
-    await assert.rejects(
-      refreshModels(makeContext({ allowNetwork: true, credential: undefined })),
-      /UNISOUND_API_KEY is not configured/,
-    );
-  } finally {
-    globalThis.fetch = original;
-  }
-  assert.equal(fetchCalled, false);
+	const { "unisound-plan": provider } = registeredProviders();
+	const { context } = makeRefreshContext({ allowNetwork: true, credential: undefined });
+	await assert.rejects(
+		() => withFetchStub(LIVE_CATALOG, () => provider.refreshModels!(context)),
+		/API key is not configured for unisound-plan/,
+	);
 });
 
 test("network phase surfaces HTTP errors so pi keeps the previous list", async () => {
-  const providers = registeredConfig();
-  const refreshModels = providers["unisound"].refreshModels;
-  assert.ok(refreshModels);
-  const original = globalThis.fetch;
-  globalThis.fetch = async () => ({ ok: false, status: 503 }) as unknown as Response;
-  try {
-    await assert.rejects(refreshModels(makeContext({ allowNetwork: true })), /returned HTTP 503/);
-  } finally {
-    globalThis.fetch = original;
-  }
+	const { unisound: provider } = registeredProviders();
+	const restore = makeRefreshContext({
+		stored: { models: [storedChatModel("unisound", "u2", { input: 0.14, output: 0.28, cacheRead: 0.003, cacheWrite: 0 })], checkedAt: 0 },
+	});
+	await provider.refreshModels!(restore.context);
+	const { context } = makeRefreshContext({
+		allowNetwork: true,
+		stored: { models: [storedChatModel("unisound", "u2", { input: 0.14, output: 0.28, cacheRead: 0.003, cacheWrite: 0 })], checkedAt: 0 },
+	});
+	const original = globalThis.fetch;
+	globalThis.fetch = async () => ({ ok: false, status: 500, json: async () => ({}) }) as unknown as Response;
+	try {
+		await assert.rejects(() => provider.refreshModels!(context), /returned HTTP 500/);
+	} finally {
+		globalThis.fetch = original;
+	}
+	assert.deepEqual(provider.getModels().map((m) => m.id), ["u2"]);
 });
 
-test("network phase rejects unexpected response shapes and empty catalogs", async () => {
-  const providers = registeredConfig();
-  const refreshModels = providers["unisound"].refreshModels;
-  assert.ok(refreshModels);
-  await withFetchStub({ foo: "bar" }, async () => {
-    await assert.rejects(
-      refreshModels(makeContext({ allowNetwork: true })),
-      /unexpected response shape/,
-    );
-  });
-  await withFetchStub({ data: [] }, async () => {
-    await assert.rejects(refreshModels(makeContext({ allowNetwork: true })), /no models/);
-  });
+test("network phase skips fetching while fresh, force bypasses the window", async () => {
+	const { unisound: provider } = registeredProviders();
+	let fetchCalls = 0;
+	const original = globalThis.fetch;
+	globalThis.fetch = async () => {
+		fetchCalls++;
+		return { ok: true, status: 200, json: async () => LIVE_CATALOG } as unknown as Response;
+	};
+	try {
+		const fresh = makeRefreshContext({
+			allowNetwork: true,
+			stored: { models: [storedChatModel("unisound", "u2", { input: 0.14, output: 0.28, cacheRead: 0.003, cacheWrite: 0 })], checkedAt: Date.now() },
+		});
+		await provider.refreshModels!(fresh.context);
+		assert.equal(fetchCalls, 0);
+		const forced = makeRefreshContext({
+			allowNetwork: true,
+			force: true,
+			stored: { models: [storedChatModel("unisound", "u2", { input: 0.14, output: 0.28, cacheRead: 0.003, cacheWrite: 0 })], checkedAt: Date.now() },
+		});
+		await provider.refreshModels!(forced.context);
+		assert.equal(fetchCalls, 1);
+	} finally {
+		globalThis.fetch = original;
+	}
+});
+
+test("empty catalogs are rejected so the previous list is kept", async () => {
+	const { unisound: provider } = registeredProviders();
+	const { context } = makeRefreshContext({ allowNetwork: true });
+	await assert.rejects(
+		() => withFetchStub({ data: [] }, () => provider.refreshModels!(context)),
+		/returned no models/,
+	);
 });

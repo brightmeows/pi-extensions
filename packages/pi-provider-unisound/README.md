@@ -101,8 +101,8 @@ Or use `/login` in pi to store them in `~/.pi/agent/auth.json`:
 
 ```json
 {
-  "unisound": { "apiKey": "sk-..." },
-  "unisound-plan": { "apiKey": "sk-..." }
+  "unisound": { "type": "api_key", "key": "sk-..." },
+  "unisound-plan": { "type": "api_key", "key": "sk-..." }
 }
 ```
 
