@@ -32,7 +32,7 @@ function parsePeerNames(text: string): string[] {
  * One peer in the mesh-wide "peer entry" visual language, shared by mesh_list
  * and mesh_get_profile so a peer looks identical in both tools. Identity on
  * line 1 (name accent → role text → branch/model dim), context on line 2
- * (cwd/description muted); ambiguous peers get a sessionId targeting hint.
+ * (cwd/sessionName/description muted); ambiguous peers get a sessionId targeting hint.
  */
 function renderPeerEntry(p: PeerInfo, theme: RenderTheme): Text[] {
   // Line 1: identity — name is the scan target, role the selection cue.
@@ -41,8 +41,10 @@ function renderPeerEntry(p: PeerInfo, theme: RenderTheme): Text[] {
   if (p.gitBranch) line1 += ` ${theme.fg("dim", `(${p.gitBranch})`)}`;
   if (p.ambiguous) line1 += ` ${theme.fg("warning", "⚠ ambiguous name")}`;
   line1 += ` ${theme.fg("dim", `· ${p.model}`)}`;
-  // Line 2: context — long secondary text.
+  // Line 2: context — long secondary text. The session name (what this
+  // session is working on, if named) sits between cwd and the profile description.
   let line2 = `    ${theme.fg("muted", p.cwd)}`;
+  if (p.sessionName) line2 += theme.fg("muted", ` · ${p.sessionName}`);
   if (p.profile?.description) line2 += theme.fg("muted", ` — ${p.profile.description}`);
   const lines = [new Text(`- ${line1}`, 0, 0), new Text(line2, 0, 0)];
   if (p.ambiguous) {
@@ -109,7 +111,7 @@ export function registerMeshTools(pi: ExtensionAPI): void {
     name: "mesh_list",
     label: "List mesh peers",
     description:
-      "List other pi instances currently online on the agent mesh, with each peer's name, working directory (cwd), model, git branch, and self-declared role/description (if any). Same-project peers (same cwd) are listed first — the cwd tells you whether a peer shares your codebase.",
+      "List other pi instances currently online on the agent mesh, with each peer's name, working directory (cwd), model, git branch, session name (if the session was named), and self-declared role/description (if any). Same-project peers (same cwd) are listed first — the cwd tells you whether a peer shares your codebase.",
     promptSnippet: "Discover other pi agents on the mesh",
     promptGuidelines: [
       "Use mesh_list to see which other agents are online and their self-declared roles before deciding who to contact.",
@@ -177,10 +179,11 @@ export function registerMeshTools(pi: ExtensionAPI): void {
         const role = p.profile?.role ? ` [${p.profile.role}]` : "";
         const branch = p.gitBranch ? ` (${p.gitBranch})` : "";
         const ambig = p.ambiguous ? " ⚠ ambiguous name" : "";
+        const session = p.sessionName ? ` · ${p.sessionName}` : "";
         const desc = p.profile?.description ? ` — ${p.profile.description}` : "";
         const sid = p.ambiguous ? `\n    sessionId: ${p.sessionId} (use this to target)` : "";
         // Two lines per peer: identity on line 1, cwd (long) on line 2.
-        return `- ${p.name}${role}${branch}${ambig} · ${p.model}\n    ${p.cwd}${desc}${sid}`;
+        return `- ${p.name}${role}${branch}${ambig} · ${p.model}\n    ${p.cwd}${session}${desc}${sid}`;
       });
       return {
         content: [
@@ -199,7 +202,7 @@ export function registerMeshTools(pi: ExtensionAPI): void {
     name: "mesh_get_profile",
     label: "Get peer profile",
     description:
-      "Read a peer's self-declared profile (role + description) and basic identity (name, model, cwd). Omit `name` to read your own profile.",
+      "Read a peer's self-declared profile (role + description) and basic identity (name, session name, model, cwd). Omit `name` to read your own profile.",
     promptGuidelines: [
       "Use mesh_get_profile to learn what a peer specializes in before contacting them.",
     ],
@@ -252,6 +255,7 @@ export function registerMeshTools(pi: ExtensionAPI): void {
             text: JSON.stringify(
               {
                 name: target.name,
+                sessionName: target.sessionName ?? null,
                 role: target.profile?.role ?? null,
                 description: target.profile?.description ?? null,
                 model: target.model,

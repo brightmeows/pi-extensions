@@ -11,13 +11,14 @@ Self-sufficient: install alone to discover other pi instances and self-declare a
 - **Discovery**: each instance writes a PID-file marker to `~/.pi/mesh/registry/`. Liveness is verified by `kill(pid, 0)` + a socket connect probe — no heartbeat drift, no stale leftovers (the kernel reclaims the socket fd on exit, including SIGKILL/crash).
 - **Transport**: Unix domain sockets via `node:net` (zero runtime dependencies). Requests are routed by a caller-defined `type` string to handlers registered via `serve()`; consumers (`pi-peek-agent`'s `"ask"`, `pi-chat-room`'s `"message"`) define their own types.
 - **Identity**: each instance gets a stable name derived deterministically from its session id (a hash into an adjective+noun pool). Renameable at runtime. `PI_MESH_NAME` overrides.
+- **Session name**: the pi session name (set by the user `/name` or the model `rename_session` tool) is reflected onto the mesh automatically — peers see what this session is working on. Unnamed sessions simply show nothing. Clamped to 100 chars at the sync boundary.
 - **Profile**: runtime role/description other agents see — the "name card" for multi-agent workflows.
 
 ## Tools
 
 ### `mesh_list`
 
-List other pi instances online, with each peer's name, cwd, model, git branch, and self-declared role. Same-project peers first.
+List other pi instances online, with each peer's name, cwd, model, git branch, session name (if set), and self-declared role. Same-project peers first.
 
 ### `mesh_get_profile`
 

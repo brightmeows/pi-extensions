@@ -77,6 +77,7 @@ export default function registerMeshExtension(pi: ExtensionAPI): void {
         pid: process.pid,
         sockPath,
         name,
+        sessionName: ctx.sessionManager.getSessionName(),
         cwd,
         gitBranch: getGitBranch(cwd),
         model,
@@ -143,6 +144,11 @@ export default function registerMeshExtension(pi: ExtensionAPI): void {
     const api = tryGetMeshAPI();
     const m = event.model;
     if (api && m) api.updateModel(`${m.provider}/${m.id}`);
+  });
+
+  pi.on("session_info_changed", (event) => {
+    const api = tryGetMeshAPI();
+    if (api) api.updateSessionName(event.name);
   });
 
   pi.on("session_shutdown", () => {
@@ -214,6 +220,7 @@ export default function registerMeshExtension(pi: ExtensionAPI): void {
       const lines = [
         `mesh              ${self.name}`,
         `session id        ${self.sessionId}`,
+        `session name      ${self.sessionName ?? "(none)"}`,
         `pid               ${self.pid}`,
         `socket            ${self.sockPath}`,
         `model             ${self.model}`,

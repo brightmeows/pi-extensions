@@ -23,7 +23,7 @@ import type {
   ResolvePeerOptions,
   ServeHandler,
 } from "./types.ts";
-import { MESH_GLOBAL_KEY } from "./types.ts";
+import { MESH_GLOBAL_KEY, MAX_SESSION_NAME_LENGTH } from "./types.ts";
 
 export interface MeshDeps {
   /** This instance's base identity (sessionId/pid/sockPath/name/cwd/model/since). */
@@ -55,6 +55,16 @@ export function initMeshAPI(deps: MeshDeps): MeshAPIInternal {
   const api: MeshAPI = {
     updateModel(modelId: string): void {
       state.self.model = modelId;
+    },
+
+    updateSessionName(name: string | undefined): void {
+      // pi already collapses newlines in session names; mesh only caps the length.
+      const n = name?.trim();
+      state.self.sessionName = !n
+        ? undefined
+        : n.length > MAX_SESSION_NAME_LENGTH
+          ? `${n.slice(0, MAX_SESSION_NAME_LENGTH - 1)}…`
+          : n;
     },
 
     setName(name: string): void {

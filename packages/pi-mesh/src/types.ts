@@ -30,6 +30,13 @@ export const DEFAULT_MESH_CONFIG: Required<Pick<MeshConfig, "heartbeatMs">> = {
   heartbeatMs: 15_000,
 };
 
+/**
+ * Cap for the pi session name carried in {@link PeerInfo.sessionName}. pi sets
+ * no length limit on session names (only newline collapsing), so mesh clamps at
+ * the sync boundary to keep markers and mesh_list output bounded.
+ */
+export const MAX_SESSION_NAME_LENGTH = 100;
+
 // ---------------------------------------------------------------------------
 // Peer identity & profile
 // ---------------------------------------------------------------------------
@@ -59,6 +66,12 @@ export interface PeerInfo {
   sockPath: string;
   /** Display name — identity, renameable via {@link MeshAPI.setName}. */
   name: string;
+  /**
+   * The pi session's display name, if set (user `/name` or model `rename_session`).
+   * A read-only fact reflected onto the mesh — unlike {@link PeerProfile}, it is
+   * never agent-authored via mesh tools.
+   */
+  sessionName?: string;
   /** Working directory — used to group "same project" peers. */
   cwd: string;
   /** Git branch, if any (same-project disambiguation). */
@@ -165,6 +178,8 @@ export interface MeshAPI {
   getSelfInfo(): PeerInfo;
   /** Update the recorded model id (on model_select). */
   updateModel(modelId: string): void;
+  /** Update the recorded pi session name (on session_info_changed). Empty/undefined clears. */
+  updateSessionName(name: string | undefined): void;
   /** Override the display name (identity). Updates self + registry. */
   setName(name: string): void;
 
