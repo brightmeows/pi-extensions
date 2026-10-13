@@ -38,7 +38,7 @@ function anchorRef(description: string) {
 	return Type.Optional(
 		Type.Object(
 			{
-				line: Type.Number({ description: "1-based line number" }),
+				line: Type.Integer({ minimum: 1, description: "1-based line number" }),
 				hash: Type.String({ description: "Line content hash copied from read output (the #HASH after the line number)" }),
 			},
 			{ description },

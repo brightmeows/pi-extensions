@@ -312,6 +312,23 @@ test("edit schema: empty body rejected at the schema layer (minItems 1)", () => 
 	}
 });
 
+test("edit schema: anchor line is an integer with a minimum of one", () => {
+	const override: any = makeEditOverride("/tmp");
+	const lineSchema = override.parameters.properties.edits.items.properties.anchor.properties.line;
+	assert.equal(lineSchema.type, "integer");
+	assert.equal(lineSchema.minimum, 1);
+	assert.throws(
+		() => validateToolArguments(override, {
+			name: "edit",
+			arguments: {
+				path: "f.txt",
+				edits: [{ op: "replace", anchor: { line: 0, hash: "XX" }, body: ["new"] }],
+			},
+		} as any),
+		/Validation failed/,
+	);
+});
+
 test("edit execute: delete op", async () => {
 	await withDir(async (dir) => {
 		const f = join(dir, "f.txt");
