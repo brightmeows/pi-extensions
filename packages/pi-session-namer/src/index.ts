@@ -45,8 +45,14 @@ export default function sessionNamerExtension(pi: ExtensionAPI) {
 
     if (!config.enabled || hasNamed) return;
 
+    // Name from the first user prompt only. Runs started by an extension
+    // message (sendMessage with triggerTurn) carry no prompt.
+    if (event.messageType !== "user") return;
+
     // Skip empty prompts (e.g. image-only messages)
-    if (!event.prompt?.trim()) return;
+    if (!event.prompt.trim()) return;
+
+    const prompt = event.prompt;
 
     // Mark as handled (no retry regardless of subsequent success/failure)
     hasNamed = true;
@@ -71,7 +77,7 @@ export default function sessionNamerExtension(pi: ExtensionAPI) {
           rolesApi,
           config.sideAgentRole,
           config,
-          { turns: [{ user: event.prompt }] },
+          { turns: [{ user: prompt }] },
         );
 
         if (ctx.sessionManager.getSessionFile() !== sessionFile || pi.getSessionName()) return;
@@ -81,7 +87,7 @@ export default function sessionNamerExtension(pi: ExtensionAPI) {
         // the cheap utility model) — fall back to a truncated prompt title
         // and surface the reason in the TUI.
         const reason = err instanceof Error ? err.message : String(err);
-        const fallback = event.prompt
+        const fallback = prompt
           .slice(0, config.maxLength || undefined)
           .replace(/\n/g, " ")
           .trim();

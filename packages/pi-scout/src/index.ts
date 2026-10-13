@@ -270,7 +270,12 @@ export default function scoutExtension(pi: ExtensionAPI) {
       cachedAllSkills = allSkills;
     }
 
+    // Scout routes user prompts. Runs started by an extension message
+    // (sendMessage with triggerTurn) carry no prompt — nothing to route.
+    if (event.messageType !== "user") return;
+
     if (!config.enabled) return;
+
     // Nothing to do if no routing module is enabled.
     if (!MODULES.some((m) => config.modules[m.key])) return;
 
