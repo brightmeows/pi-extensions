@@ -65,7 +65,12 @@ function setup(allowedRoles?: string) {
     registerMessageRenderer() {},
     registerCommand() {},
   } as unknown as ExtensionAPI;
-  subagentExtension(pi);
+  // Point the availability state at the temp root — session_start announces
+  // offline roles from it, and the developer's real
+  // ~/.pi/subagent/availability.json varies by machine.
+  subagentExtension(pi, {
+    availabilityPath: path.join(root, "agent", "subagent", "availability.json"),
+  });
 
   return {
     tools,
@@ -208,7 +213,12 @@ describe("subagent tool registration", () => {
     const loader = new DefaultResourceLoader({
       cwd: projectDir,
       agentDir,
-      extensionFactories: [subagentExtension],
+      extensionFactories: [
+        (pi) =>
+          subagentExtension(pi, {
+            availabilityPath: path.join(agentDir, "subagent", "availability.json"),
+          }),
+      ],
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,
@@ -250,7 +260,12 @@ describe("subagent tool registration", () => {
     const loader = new DefaultResourceLoader({
       cwd: projectDir,
       agentDir,
-      extensionFactories: [subagentExtension],
+      extensionFactories: [
+        (pi) =>
+          subagentExtension(pi, {
+            availabilityPath: path.join(agentDir, "subagent", "availability.json"),
+          }),
+      ],
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,
