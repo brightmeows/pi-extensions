@@ -1,6 +1,6 @@
 # pi 自定义消息启动修复发布后的插件适配计划
 
-状态：**等待包含上游修复的正式版发布；尚未实施。**
+状态：**已完成并归档（2026-10-15，pi `1.2.0`）。**
 
 调查日期：2026-10-12。调查时本机 pi 为 `1.1.0`，GitHub 最新正式版为 `v1.1.0`；相关修复已列入 `main` 的 `Unreleased`。开始执行时必须重新确认发布状态，不预设下一个版本号。
 
@@ -23,9 +23,9 @@
 
 执行前检查：
 
-- [ ] 确认某个正式 release 包含这两项变更，而不仅是 issue 已关闭。
-- [ ] 阅读该 release/tag 的 changelog、扩展文档和实际发布包的类型声明，确认最终契约。
-- [ ] 记录目标版本、release URL 和修复来源；如与本计划记录的契约不同，先调整实施方案。
+- [x] 确认某个正式 release 包含这两项变更，而不仅是 issue 已关闭（pi `1.2.0`）。
+- [x] 阅读该 release/tag 的 changelog、扩展文档和实际发布包的类型声明，确认最终契约。
+- [x] 记录目标版本、release URL 和修复来源；如与本计划记录的契约不同，先调整实施方案。
 
 调查时上游预告的契约：
 
@@ -86,13 +86,13 @@ BeforeAgentStartEvent =
 
 ### 离线检查
 
-- [ ] 仓库根运行 `npx tsc --noEmit`。
-- [ ] 复用相关包的 `node:test` 测试，命令为 `node --test <相关测试路径>`。
-- [ ] user 事件保持原有路由和命名行为；fixture 使用目标版的合法事件类型。
-- [ ] custom 事件不触发 scout/namer 的 side-model 调用、不命名、不覆盖上一条用户的路由上下文。
-- [ ] 在 skill-router 开启时，custom 事件依然将原生 `skills` 置空；禁用时维持原有配置语义。
-- [ ] 固定文件输入下，context-include 在两种事件中产生一致 section。
-- [ ] 验证范围不包含 TUI 排版测试。若需要跨组件 fixture，优先复用 pi/项目现有设施，不为本计划另造大型 harness。
+- [x] 仓库根运行 `npx tsc --noEmit`。
+- [x] 复用相关包的 `node:test` 测试，命令为 `node --test <相关测试路径>`。
+- [x] user 事件保持原有路由和命名行为；fixture 使用目标版的合法事件类型。
+- [x] custom 事件不触发 scout/namer 的 side-model 调用、不命名、不覆盖上一条用户的路由上下文。
+- [x] 在 skill-router 开启时，custom 事件依然将原生 `skills` 置空（通过 `ScoutModule.preparePrompt` / `preparePromptOptions` 前置不变量）；禁用时维持原有配置语义。
+- [x] 固定文件输入下，context-include 在两种事件中产生一致 section。
+- [x] 验证范围不包含 TUI 排版测试。若需要跨组件 fixture，优先复用 pi/项目现有设施，不为本计划另造大型 harness。
 
 ### 用户重载后的最小真实验收
 
@@ -120,4 +120,4 @@ BeforeAgentStartEvent =
 
 正式修复版已安装；相关插件完成新事件类型适配；必要离线检查通过；用户重载后确认续接不再引发 prompt section 往返变化。完成后记录实际版本和验收结果，归档本计划。
 
-另有 [before_agent_start 并发竞态计划](pi-before-agent-start-race.md)，涉及 scouting 期间并发提交消息，是不同问题，不能因本次修复而自动结案。
+另有 [before_agent_start 并发竞态计划](../pi-before-agent-start-race.md)，涉及 scouting 期间并发提交消息，是不同问题，不能因本次修复而自动结案。

@@ -86,6 +86,25 @@ export interface AppliedDecision {
 }
 
 /**
+ * Apply per-run system-prompt invariants across all enabled modules.
+ *
+ * Runs unconditionally on every `before_agent_start` (user and custom runs
+ * alike, before routing or early-exit checks) when scout is enabled, so the
+ * base system prompt never oscillates when a run skips routing.
+ *
+ * @internal — exported for testing.
+ */
+export function preparePromptOptions(
+  config: ScoutContext["config"],
+  systemPromptOptions: ScoutContext["systemPromptOptions"] | undefined,
+): void {
+  if (!config.enabled || !systemPromptOptions) return;
+  for (const m of enabledModules(config)) {
+    m.preparePrompt?.(systemPromptOptions);
+  }
+}
+
+/**
  * Apply a decision via the registry: each enabled module runs its side
  * effects and may inject a message. Apply-time failures mark the decision as
  * an error and zero the offending field.

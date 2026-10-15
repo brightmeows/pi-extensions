@@ -28,6 +28,7 @@ import {
   scoutPrefix,
   formatDecisionStatus,
   normalizeDecision,
+  preparePromptOptions,
   applyDecision,
 } from "./engine.ts";
 
@@ -66,6 +67,7 @@ export default function scoutExtension(pi: ExtensionAPI) {
 
   /** Cache of previous turn context for better routing decisions. */
   let prevTurn: { userPrompt: string; assistantSummary: string } | undefined;
+  let isUserRun = false;
 
   function tryGetRolesApi(ctx: ExtensionContext): ModelRolesAPI | undefined {
     try {
@@ -223,6 +225,7 @@ export default function scoutExtension(pi: ExtensionAPI) {
     config = loadScoutConfig(ctx.cwd);
     resetSkillCache();
     prevTurn = undefined;
+    isUserRun = false;
     cachedAllSkills = [];
   });
 
@@ -236,6 +239,7 @@ export default function scoutExtension(pi: ExtensionAPI) {
 
   // ── turn_end: cache assistant response for next turn's context ──
   pi.on("turn_end", async (event) => {
+    if (!isUserRun) return;
     const msg = event.message;
     if (msg.role !== "assistant") return;
 
@@ -263,12 +267,19 @@ export default function scoutExtension(pi: ExtensionAPI) {
 
   // ── before_agent_start: core scout logic ────────────────────────
   pi.on("before_agent_start", async (event, ctx) => {
+    isUserRun = event.messageType === "user";
+
     // Snapshot the full skill inventory (including user-only skills) for
     // list_skills — active discovery works even when routing is off.
     const allSkills = toSkillEntries(event.systemPromptOptions?.skills ?? []);
     if (cachedAllSkills.length === 0 && allSkills.length > 0) {
       cachedAllSkills = allSkills;
     }
+
+    // Enforce module prompt invariants (e.g. stripping the native <skills>
+    // catalog when skill-router owns skill delivery) on EVERY run — user or
+    // custom — and before any early exit, so the system prompt stays stable.
+    preparePromptOptions(config, event.systemPromptOptions);
 
     // Scout routes user prompts. Runs started by an extension message
     // (sendMessage with triggerTurn) carry no prompt — nothing to route.

@@ -69,6 +69,10 @@ export const skillRouterModule: ScoutModule<string[]> = {
 
   describe: (value) => (value.length > 0 ? value.join(", ") : "(none)"),
 
+  preparePrompt: (systemPromptOptions) => {
+    systemPromptOptions.skills = [];
+  },
+
   apply: (value, ctx) => {
     ctx.systemPromptOptions.skills = [];
     return { message: buildSkillsInjection(value, ctx.skillEntries) ?? undefined };

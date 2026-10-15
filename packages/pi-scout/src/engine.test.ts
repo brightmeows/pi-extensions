@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { normalizeDecision } from "./engine.ts";
+import { normalizeDecision, preparePromptOptions } from "./engine.ts";
 import type { ScoutConfig, ScoutContext, ScoutDecision } from "./types.ts";
 
 function makeCtx(config: ScoutConfig): ScoutContext {
@@ -81,4 +81,25 @@ test("normalizeDecision flags a validate error and carries the cause through", (
   assert.equal(out.fields.role, null);
   // errorDetail from the original decision survives the rebuild.
   assert.equal(out.errorDetail, "carried");
+});
+
+test("preparePromptOptions strips native skills when skill-router is enabled", () => {
+  const opts = { skills: [{ name: "a" } as any] };
+  preparePromptOptions(base, opts);
+  assert.deepEqual(opts.skills, []);
+});
+
+test("preparePromptOptions preserves native skills when scout or skill-router is disabled", () => {
+  const original = [{ name: "a" } as any];
+
+  const scoutOff = { skills: [...original] };
+  preparePromptOptions({ ...base, enabled: false }, scoutOff);
+  assert.equal(scoutOff.skills.length, 1);
+
+  const routerOff = { skills: [...original] };
+  preparePromptOptions(
+    { ...base, modules: { ...base.modules, skillRouter: false } },
+    routerOff,
+  );
+  assert.equal(routerOff.skills.length, 1);
 });

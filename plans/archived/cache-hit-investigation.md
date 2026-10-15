@@ -1,6 +1,6 @@
 # 缓存命中为 0% 调查计划
 
-> 2026-10-12：本轮调查已结束，临时诊断插件已移除。已确认 pi 核心 #10267 / #5581 的 custom-run prompt 回退问题；发版后的工作见 [插件升级适配计划](pi-custom-message-prompt-upgrade.md)。稳定前缀下的服务端缓存波动仍未确定根因。下文保留为初始调查提纲，不作为当前待办或已证实结论。
+> 2026-10-15（已归档）：本轮调查已全面结案。已定位并解决两项客户端缓存破坏根因：（1）`pi-scout` 在 custom run（如 `/continue`）或早退路径下未清理原生 93KB `<skills>` section，已通过 `ScoutModule.preparePrompt` 前置不变量根治（见 [插件升级适配计划](pi-custom-message-prompt-upgrade.md)）；（2）第三方 `pi-web-access` 在 `toolActivation: "auto"` 下监听 `session_tree` 重排 `<tools>` 顺序导致中断/重试后前缀失效，已通过配置 `"toolActivation": "eager"` 解决。其余服务端现象（多人共享账号触发 OpenAI 主/次缓存节点分流、Kiro 链路固定 90% 缓存模拟、GLM 偶发实例漂移）均已从会话 JSONL 中证实。下文保留为初始调查提纲。
 
 ## 现象
 
@@ -50,4 +50,4 @@ pi 插件安装后，偶尔出现缓存命中率为 0% 的情况。
 
 ## 状态
 
-- 本轮调查已结束；后续只按 [插件升级适配计划](pi-custom-message-prompt-upgrade.md) 推进明确的上游修复适配。
+- **已完成并归档（2026-10-15）**。

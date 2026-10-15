@@ -152,6 +152,9 @@ export interface ScoutModule<V = unknown> {
   describe(value: V): string;
 
   // ── action ──────────────────────────────────────────────────────
+  /** Per-run prompt invariant applied on every run (user or custom) when the
+   *  module is enabled, before any routing or early-exit checks. */
+  preparePrompt?(systemPromptOptions: Pick<NormalizedBuildSystemPromptOptions, "skills">): void;
   /** Apply the decision: side effects + optional injected message. */
   apply(value: V, ctx: ScoutContext): Promise<ApplyResult | void> | ApplyResult | void;
 }
