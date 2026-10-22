@@ -23,6 +23,9 @@
  * pre-filter candidates. Context windows are likewise rebuilt client-side from
  * the surviving matches — context lines of a filtered-out match never leak.
  *
+ * Both rg invocations pass `--no-config`: a `RIPGREP_CONFIG_PATH` file must
+ * not silently change match semantics (parity with pi's built-in grep).
+ *
  * Falls back to the built-in grep when aborted or when ripgrep cannot be
  * located (the built-in can auto-download rg). Extended params never
  * delegate — the built-in would misread them.
@@ -223,7 +226,7 @@ function listRgFiles(
 ): Promise<Set<string>> {
   return new Promise((resolveFiles, reject) => {
     if (signal?.aborted) return reject(new Error("Operation aborted"));
-    const args = ["--files", "--null", "--hidden", "--no-ignore", "--follow", "--max-depth=1"];
+    const args = ["--no-config", "--files", "--null", "--hidden", "--no-ignore", "--follow", "--max-depth=1"];
     for (const glob of globs) args.push("--glob", glob);
     args.push("--", ...directories);
     const child = spawn(rgPath, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -635,7 +638,7 @@ export function makeGrepOverrideWithBackend(cwd: string, overrides: Partial<Grep
           return;
         }
 
-        const args = ["--json", "--line-number", "--color=never", "--hidden"];
+        const args = ["--no-config", "--json", "--line-number", "--color=never", "--hidden"];
         if (ignoreCase) args.push("--ignore-case");
         if (literal) args.push("--fixed-strings");
         if (wordMatch) args.push("--word-regexp");

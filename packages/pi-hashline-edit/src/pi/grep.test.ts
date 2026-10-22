@@ -115,7 +115,7 @@ test("formats parsed rg matches with full-line hash anchors", async () => {
       assert.match(output, /3#[0-9A-Z]+│alpha only/);
       assert.deepEqual(fake.calls[0], {
         path: "/fake/rg",
-        args: ["--json", "--line-number", "--color=never", "--hidden", "-e", "alpha", "--", dir],
+        args: ["--no-config", "--json", "--line-number", "--color=never", "--hidden", "-e", "alpha", "--", dir],
       });
     }),
   );
@@ -375,6 +375,7 @@ test("passes output flags and formats files and counts", async () => {
       });
       assert.equal(text(files), "a.ts\nb.ts");
       assert.deepEqual(fake.calls[0].args, [
+        "--no-config",
         "--json",
         "--line-number",
         "--color=never",
