@@ -77,6 +77,7 @@ const DEFAULT_ICONS: EditorShellIcons = {
   context: "\uf49b ", //   oct-cache
   cache: "\u26a1", // ⚡  oct-zap (NF maps this codepoint to U+26A1)
   hitRate: "\uf4de ", //   oct-goal
+  tps: "\uf252 ", //   fa-hourglass_half
   cost: "\uf155", //   fa-dollar_sign
   turn: "\uf442 ", //   oct-comment_discussion
   compaction: "\uf4ea ", //   oct-iterations
@@ -620,7 +621,7 @@ export default function (pi: ExtensionAPI) {
           : undefined;
       const tpsLabel = config.tpsDisplay === "end-to-end" ? "e2e" : "gen";
       const tpsPart = displayedTps != null
-        ? `${theme.fg("dim", " · ")}${theme.fg("muted", `${formatTps(displayedTps)} ${tpsLabel} t/s`)}`
+        ? `${theme.fg("dim", " · ")}${theme.fg("muted", `${icons.tps}${formatTps(displayedTps)} ${tpsLabel} t/s`)}`
         : "";
       const costPart =
         _sessionCost > 0
