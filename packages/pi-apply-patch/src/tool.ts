@@ -101,11 +101,9 @@ export function makeApplyPatchTool(
 
       component.clear();
       component.addChild(header);
-      // The preview belongs to argument streaming: once execution starts, the
-      // result renderer owns the body. The last renderCall fires before
-      // renderResult, so a flag set there cannot separate the phases —
-      // executionStarted is the boundary.
-      if (!context.executionStarted) {
+      // History replay supplies a final result without an execution-start event.
+      // Preview only while the call is pending and has no final result.
+      if (!context.executionStarted && context.isPartial) {
         const rows = previewRows(args, theme, context.cwd, context.state);
         if (rows.length > 0) {
           component.addChild(new Text("", 0, 0));

@@ -1,9 +1,14 @@
-import { generateDiffString, type Theme } from "@earendil-works/pi-coding-agent";
+import {
+  generateDiffString,
+  type Theme,
+  type ToolRenderContext,
+} from "@earendil-works/pi-coding-agent";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import { renderPreviewBlock } from "../src/render.ts";
 import { buildPreview, emptyPreviewState, type PreviewFileSystem } from "../src/stream-preview.ts";
+import { makeApplyPatchTool } from "../src/tool.ts";
 import { ioError, ROOT } from "./memory-fs.ts";
 
 function fixture(files: Record<string, string>, links: Record<string, string> = {}) {
@@ -28,7 +33,42 @@ function fixture(files: Record<string, string>, links: Record<string, string> = 
 }
 
 const patch = (...lines: string[]) => ["*** Begin Patch", ...lines, "*** End Patch"].join("\n");
-const plainTheme = { fg: (_color: string, text: string) => text } as Theme;
+const plainTheme = {
+  fg: (_color: string, text: string) => text,
+  bold: (text: string) => text,
+} as Theme;
+
+test("call previews are discarded on execution start and completed history replay", () => {
+  const renderCall = makeApplyPatchTool().renderCall!;
+  const args = { input: "*** Begin Patch\n*** Add File: a.txt\n+new" };
+  for (const finalState of [
+    { executionStarted: true, isPartial: true },
+    { executionStarted: false, isPartial: false },
+  ]) {
+    const context: ToolRenderContext = {
+      args,
+      toolCallId: "preview-lifecycle",
+      state: {},
+      cwd: ROOT,
+      executionStarted: false,
+      argsComplete: false,
+      isPartial: true,
+      expanded: false,
+      showImages: false,
+      isError: false,
+      durationMs: undefined,
+      outputPad: 0,
+      lastComponent: undefined,
+      invalidate: () => {},
+    };
+    context.lastComponent = renderCall(args, plainTheme, context);
+    assert.ok(context.state.previewState);
+
+    Object.assign(context, finalState);
+    renderCall(args, plainTheme, context);
+    assert.equal(context.state.previewState, undefined);
+  }
+});
 
 test("completed previews preserve source context after normalized matching", () => {
   const before = "  keep indent\r\nold\r\n";
