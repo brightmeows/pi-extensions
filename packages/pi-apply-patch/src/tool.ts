@@ -1,6 +1,5 @@
 import {
   withFileMutationQueue,
-  renderDiff,
   type Theme,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -13,16 +12,12 @@ import {
   makeDetails,
   renderPatchHeader,
   renderPatchResult,
+  renderPreviewBlock,
   summarize,
   type PatchDetails,
   type PatchSummary,
 } from "./render.ts";
-import {
-  buildPreview,
-  emptyPreviewState,
-  type PreviewBlock,
-  type StreamPreviewState,
-} from "./stream-preview.ts";
+import { buildPreview, emptyPreviewState, type StreamPreviewState } from "./stream-preview.ts";
 
 const schema = Type.Object({
   input: Type.String({
@@ -31,8 +26,6 @@ const schema = Type.Object({
 });
 
 type Dependencies = Pick<ApplyContext, "fs" | "withFileQueue">;
-
-const MARKERS = { add: "A", update: "M", delete: "D" } as const;
 
 /**
  * Reuse the row's call component across frames. The default shell supplies the
@@ -51,36 +44,6 @@ function callComponent(state: Record<string, unknown>, last: unknown): Box {
   return component;
 }
 
-/** One preview block: the file row plus a real diff, a glimpse, or a warning. */
-function renderBlock(block: PreviewBlock, theme: Theme): string[] {
-  const label = block.moveTo ? `${block.path} → ${block.moveTo}` : block.path;
-  const rows = [theme.fg("accent", `${MARKERS[block.kind]} ${label}`)];
-  if (block.state === "ready" && block.diff !== undefined) {
-    rows.push(renderDiff(block.diff));
-    return rows;
-  }
-  if (block.state === "partial" && block.glimpse) {
-    // Still being written: color the patch lines as they arrive instead of
-    // matching them against the file.
-    for (const line of block.glimpse) {
-      const color = line.startsWith("+")
-        ? "toolDiffAdded"
-        : line.startsWith("-")
-          ? "toolDiffRemoved"
-          : "dim";
-      rows.push(theme.fg(color, line));
-    }
-    rows.push(theme.fg("dim", "… writing"));
-    return rows;
-  }
-  if (block.state === "unmatched") {
-    rows.push(theme.fg("warning", `⚠ ${block.warning ?? "hunks did not match"}`));
-    return rows;
-  }
-  rows.push(theme.fg("dim", "Preview unavailable: file is outside the workspace or not readable."));
-  return rows;
-}
-
 /** Preview rows for the patch text received so far. */
 function previewRows(
   args: { input?: string },
@@ -92,7 +55,9 @@ function previewRows(
   const previewState =
     (state.previewState as StreamPreviewState | undefined) ?? emptyPreviewState();
   state.previewState = previewState;
-  return buildPreview(args.input, cwd, previewState).flatMap((block) => renderBlock(block, theme));
+  return buildPreview(args.input, cwd, previewState).flatMap((block) =>
+    renderPreviewBlock(block, theme),
+  );
 }
 
 /** @internal */
@@ -144,6 +109,8 @@ export function makeApplyPatchTool(
           component.addChild(new Text("", 0, 0));
           component.addChild(new Text(rows.join("\n"), 0, 0));
         }
+      } else {
+        delete context.state.previewState;
       }
       return component;
     },
