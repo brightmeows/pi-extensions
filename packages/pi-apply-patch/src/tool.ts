@@ -2,6 +2,7 @@ import { withFileMutationQueue, type ToolDefinition } from "@earendil-works/pi-c
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { applyPatch, formatSummary, nodeFileSystem, type ApplyContext } from "./apply.ts";
+import { DEFAULT_CONFIG, type PatchRenderConfig } from "./config.ts";
 import { CODEX_APPLY_PATCH_GRAMMAR } from "./grammar.ts";
 import {
   countPatchFiles,
@@ -24,6 +25,7 @@ type Dependencies = Pick<ApplyContext, "fs" | "withFileQueue">;
 /** @internal */
 export function makeApplyPatchTool(
   dependencies: Dependencies = { fs: nodeFileSystem, withFileQueue: withFileMutationQueue },
+  getConfig: () => PatchRenderConfig = () => DEFAULT_CONFIG,
 ): ToolDefinition<typeof schema, PatchDetails> {
   return {
     name: "apply_patch",
@@ -79,7 +81,7 @@ export function makeApplyPatchTool(
         )
           (context.state.callText as Text | undefined)?.setText(renderPatchHeader(theme, summary));
       }
-      return renderPatchResult(result.details, text, expanded, context.isError, theme);
+      return renderPatchResult(result.details, text, expanded, context.isError, theme, getConfig());
     },
   };
 }
