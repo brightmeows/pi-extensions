@@ -20,7 +20,6 @@ import { cleanSessionName, generateSessionName, NAMING_RULES } from "./namer.ts"
 import type { NamingTurn } from "./namer.ts";
 
 const STATE_ENTRY = "pi-session-namer";
-const RENAME_CHECKPOINTS = new Set([5, 10, 20, 50, 100]);
 
 export default function sessionNamerExtension(pi: ExtensionAPI) {
   let config: SessionNamerConfig = DEFAULT_CONFIG;
@@ -236,6 +235,15 @@ export default function sessionNamerExtension(pi: ExtensionAPI) {
   });
 }
 
+/** Periodic-rename checkpoints: the 5th completed user turn, then every 10th. */
+const FIRST_CHECKPOINT = 5;
+const CHECKPOINT_INTERVAL = 10;
+
+/** Whether a completed-turn count lands on a rename checkpoint (5, 10, 20, 30, …). */
+function isRenameCheckpoint(count: number): boolean {
+  return count === FIRST_CHECKPOINT || (count > 0 && count % CHECKPOINT_INTERVAL === 0);
+}
+
 /** @internal — decide whether the active branch has reached an untried checkpoint. */
 export function dueCheckpoint(entries: unknown[], currentName: string | undefined):
   | { checkpoint: number; turns: NamingTurn[] }
@@ -244,7 +252,7 @@ export function dueCheckpoint(entries: unknown[], currentName: string | undefine
   const turns = collectTurns(entries);
   const numbered = turns.filter((turn) => turn.user);
   const checkpoint = numbered.length;
-  if (!RENAME_CHECKPOINTS.has(checkpoint) || !numbered.at(-1)?.assistant) return;
+  if (!isRenameCheckpoint(checkpoint) || !numbered.at(-1)?.assistant) return;
   if ((entries as any[]).some((entry) =>
     entry?.type === "custom" && entry.customType === STATE_ENTRY &&
     entry.data?.kind === "attempt" && entry.data.checkpoint === checkpoint

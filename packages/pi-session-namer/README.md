@@ -10,8 +10,8 @@ stale (the session drifted from its opening message), `/namer:rename` can
 regenerate from a conversation excerpt, and
 the `rename_session` tool lets the main agent name the session directly —
 the agent's full context is the best naming source.
-Optionally, generated titles can also be refreshed after the 5th, 10th, 20th,
-50th, and 100th completed user turns.
+Optionally, generated titles can also be refreshed after completed turn 5
+and every 10 turns after that (10, 20, 30, …).
 
 ## Features
 
@@ -25,9 +25,10 @@ Optionally, generated titles can also be refreshed after the 5th, 10th, 20th,
   windowed to the first 4 and last 4 (the opening defines why the session
   exists, the latest shows what it became) when the session is longer
 - **Optional periodic rename**: Uses the same excerpt as `/namer:rename` after
-  completed turns 5, 10, 20, 50, and 100; disabled by default. Explicitly set
-  titles (via `/name` or `rename_session`) are never overwritten. Existing
-  titles without plugin provenance are also left alone.
+  completed turns 5, 10, 20, 30, … (turn 5, then every 10 turns); disabled
+  by default. Explicitly set titles (via `/name` or `rename_session`) are
+  never overwritten. Existing titles without plugin provenance are also left
+  alone.
 - **Agent rename**: `rename_session` tool lets the main agent set the session
   name on the user's request, with the full conversation as its source
 
@@ -49,7 +50,7 @@ In `~/.pi/agent/settings.json`:
 | Field | Default | Description |
 |-------|---------|-------------|
 | `enabled` | `true` | Global on/off switch |
-| `periodicRename` | `false` | Refresh plugin-generated titles after completed turns 5, 10, 20, 50, and 100; set to `true` to enable |
+| `periodicRename` | `false` | Refresh plugin-generated titles after completed turns 5, 10, 20, 30, …; set to `true` to enable |
 | `sideAgentRole` | `"utility"` | pi-model-roles role for the naming side agent |
 | `maxLength` | `50` | Maximum name length in characters; `0` means unlimited, and negative values are normalized to `0` |
 

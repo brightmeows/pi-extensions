@@ -81,12 +81,14 @@ function namedBranch(count: number) {
 }
 
 test("periodic naming is due only after completed checkpoint turns", () => {
-  for (const checkpoint of [5, 10, 20, 50, 100]) {
+  for (const checkpoint of [5, 10, 20, 30]) {
     const branch = namedBranch(checkpoint);
     assert.equal(dueCheckpoint(branch, "Initial title")?.checkpoint, checkpoint);
     assert.equal(dueCheckpoint(branch.slice(0, -1), "Initial title"), undefined);
   }
-  assert.equal(dueCheckpoint(namedBranch(6), "Initial title"), undefined);
+  for (const between of [4, 6, 14, 21, 25]) {
+    assert.equal(dueCheckpoint(namedBranch(between), "Initial title"), undefined);
+  }
 });
 
 test("periodic naming skips attempted checkpoints and explicit names", () => {
@@ -94,7 +96,8 @@ test("periodic naming skips attempted checkpoints and explicit names", () => {
   branch.push({ type: "custom", customType: "pi-session-namer", data: { kind: "attempt", checkpoint: 5 } } as any);
   assert.equal(dueCheckpoint(branch, "Initial title"), undefined);
 
-  const manuallyNamed = namedBranch(10);
+  // At a checkpoint turn count, a manual name still blocks the rename.
+  const manuallyNamed = namedBranch(20);
   manuallyNamed.push({ type: "session_info", id: "name-2", name: "User title" } as any);
   assert.equal(dueCheckpoint(manuallyNamed, "User title"), undefined);
   manuallyNamed.push({ type: "session_info", id: "name-3", name: "Initial title" } as any);
