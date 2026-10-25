@@ -88,7 +88,13 @@ export function cropDiff(diff: string, config: PatchRenderConfig): string {
     }
 
     rows.push(...current.lines.slice(0, leading));
-    rows.push(omission(current.lines.length - leading - trailing, "unchanged"));
+    const hidden = current.lines.slice(leading, -trailing);
+    // Pi may already have elided source lines; that marker carries no count.
+    rows.push(
+      hidden.some((line) => /^\s+\.\.\.$/.test(line))
+        ? "… unchanged lines omitted"
+        : omission(hidden.length, "unchanged"),
+    );
     rows.push(...current.lines.slice(-trailing));
   });
 

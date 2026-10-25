@@ -1,3 +1,4 @@
+import { generateDiffString } from "@earendil-works/pi-coding-agent";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -65,6 +66,18 @@ test("crop drops the context between regions beyond the budget", () => {
     "+5 f",
     " 5 g",
   ]);
+});
+
+test("crop preserves unknown gap sizes in generated diffs", () => {
+  const before = Array.from({ length: 100 }, (_, index) => `line ${index + 1}`);
+  const after = [...before];
+  after[1] = "changed 2";
+  after[98] = "changed 99";
+  const { diff } = generateDiffString(before.join("\n"), after.join("\n"));
+
+  const cropped = cropDiff(diff, DEFAULT_CONFIG);
+  assert.match(cropped, /3 line 3\n… unchanged lines omitted\n\s+98 line 98/);
+  assert.doesNotMatch(cropped, /… \d+ unchanged lines/);
 });
 
 test("crop keeps the inner context when the diff starts or ends with several unchanged lines", () => {
