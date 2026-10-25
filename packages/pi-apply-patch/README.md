@@ -4,7 +4,7 @@
 
 Codex-compatible `apply_patch` editing for pi, limited to the current workspace.
 
-GPT models accustomed to Codex can use the familiar freeform patch format. The extension registers the official Lark grammar through pi's constrained sampling API and implements patch parsing, context matching, and file operations in TypeScript. It has no configuration or additional runtime library dependencies.
+GPT models accustomed to Codex can use the familiar freeform patch format. The extension registers the official Lark grammar through pi's constrained sampling API and implements patch parsing, context matching, and file operations in TypeScript. It has no additional runtime library dependencies.
 
 ## Dependencies
 
@@ -27,6 +27,31 @@ Or add to `~/.pi/agent/settings.json`:
 ```
 
 After changing extension source or loading configuration, run `/reload` or restart pi.
+
+## Configuration
+
+The folded view of the result diff is configurable via the `applyPatch` block in
+`~/.pi/agent/settings.json` (or a project-level `.pi/settings.json`, which
+replaces the global block entirely):
+
+```jsonc
+{
+  "applyPatch": {
+    "contextLines": 1,
+    "maxChangedLines": 10
+  }
+}
+```
+
+- `contextLines` — unchanged lines kept on each side of a changed region. `0`
+drops surrounding context.
+- `maxChangedLines` — changed (`-`/`+`) lines kept per changed region, counted
+across removals and additions together. The rest collapse into one hint line.
+
+These bound the folded view, which is what the TUI shows by default. `ctrl+o`
+expands the tool row to the full, uncropped diff. A non-numeric, negative, or
+below-minimum value falls back to the default above. Changes apply after
+`/reload` or a restart.
 
 ## Tool and transport
 
@@ -115,7 +140,7 @@ M src/main.ts
 D obsolete.txt
 ```
 
-Errors are thrown through pi's tool failure contract. In the TUI the tool row header carries the file count and the aggregate `+N/-M` (omitted when a file's previous content could not be read, so no diff exists for it); the result body lists the affected files and, when expanded, their diffs capped at 120 lines per file. Complete diff details remain in the session. RPC, print, and JSON modes receive the same plain text tool results without relying on TUI components.
+Errors are thrown through pi's tool failure contract. In the TUI the tool row header carries the file count and the aggregate `+N/-M` (omitted when a file's previous content could not be read, so no diff exists for it); the result body lists the affected files and their diffs, cropped to the configured context and changed-line budget, with every cropped region marked by a hint line. `ctrl+o` shows the diffs whole; folded results list up to eight files at a time. Complete diff details remain in the session. RPC, print, and JSON modes receive the same plain text tool results without relying on TUI components.
 
 ## Compatibility baseline
 
