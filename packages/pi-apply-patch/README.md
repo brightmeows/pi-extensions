@@ -65,6 +65,8 @@ This uses the Codex custom-tool protocol, not the distinct OpenAI API built-in `
 
 The tool is registered with `model-only` exposure: it is declared to the model, but codemode scripts cannot call it — it is absent from the script's `tools` object, whose file edits go through pi's callable file tools instead.
 
+While the model streams the patch, the tool row previews the files it has parsed so far. Completed updates use the same parser and matcher as execution to show a diff against the file on disk; additions show their proposed content and deletions show the file name. Sections still being written appear as colored patch lines. Invalid or unmatched sections show a warning without hiding the rest of the patch. Preview reads follow the same workspace boundaries as execution, including symbolic links. The preview disappears when execution starts.
+
 ## Patch format
 
 ```diff

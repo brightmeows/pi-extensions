@@ -4,6 +4,7 @@ import type { FileChange } from "./apply.ts";
 import type { PatchRenderConfig } from "./config.ts";
 import { cropDiff } from "./crop.ts";
 import type { HunkMatchInfo } from "./core/types.ts";
+import type { PreviewBlock } from "./stream-preview.ts";
 
 export interface FileDetails {
   readonly kind: FileChange["kind"];
@@ -92,6 +93,38 @@ export function renderPatchHeader(theme: Theme, summary: PatchSummary): string {
       ? ""
       : ` ${theme.fg("toolDiffAdded", `+${summary.added}`)} ${theme.fg("toolDiffRemoved", `-${summary.removed ?? 0}`)}`;
   return theme.fg("toolTitle", theme.bold("apply_patch")) + theme.fg("dim", counted) + stats;
+}
+
+/** Render a preview block using the same text sanitization as completed results. @internal */
+export function renderPreviewBlock(block: PreviewBlock, theme: Theme): string[] {
+  const label = safe(block.moveTo ? `${block.path} → ${block.moveTo}` : block.path).replaceAll(
+    "\n",
+    " ",
+  );
+  const marker = { add: "A", update: "M", delete: "D" }[block.kind];
+  const rows = [theme.fg("accent", `${marker} ${label}`)];
+  if (block.state === "ready") {
+    if (block.diff) rows.push(renderDiff(safe(block.diff)));
+    return rows;
+  }
+  if (block.state === "partial") {
+    for (const line of block.glimpse ?? []) {
+      const color = line.startsWith("+")
+        ? "toolDiffAdded"
+        : line.startsWith("-")
+          ? "toolDiffRemoved"
+          : "dim";
+      rows.push(theme.fg(color, safe(line)));
+    }
+    rows.push(theme.fg("dim", "… writing"));
+    return rows;
+  }
+  if (block.state === "unmatched" || block.state === "invalid") {
+    rows.push(theme.fg("warning", safe(block.warning ?? "Preview unavailable.")));
+    return rows;
+  }
+  rows.push(theme.fg("dim", "Preview unavailable: file is outside the workspace or not readable."));
+  return rows;
 }
 
 /** @internal */
