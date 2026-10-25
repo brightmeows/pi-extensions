@@ -30,7 +30,8 @@ export function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
-function within(path: string, root: string): boolean {
+/** Shared containment check for execution and preview paths. @internal */
+export function within(path: string, root: string): boolean {
   const suffix = relative(root, path);
   return (
     suffix === "" ||

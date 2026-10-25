@@ -1,7 +1,10 @@
 import { generateDiffString, renderDiff, type Theme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, Text } from "@earendil-works/pi-tui";
 import type { FileChange } from "./apply.ts";
+import type { PatchRenderConfig } from "./config.ts";
+import { cropDiff } from "./crop.ts";
 import type { HunkMatchInfo } from "./core/types.ts";
+import type { PreviewBlock } from "./stream-preview.ts";
 
 export interface FileDetails {
   readonly kind: FileChange["kind"];
@@ -92,6 +95,38 @@ export function renderPatchHeader(theme: Theme, summary: PatchSummary): string {
   return theme.fg("toolTitle", theme.bold("apply_patch")) + theme.fg("dim", counted) + stats;
 }
 
+/** Render a preview block using the same text sanitization as completed results. @internal */
+export function renderPreviewBlock(block: PreviewBlock, theme: Theme): string[] {
+  const label = safe(block.moveTo ? `${block.path} → ${block.moveTo}` : block.path).replaceAll(
+    "\n",
+    " ",
+  );
+  const marker = { add: "A", update: "M", delete: "D" }[block.kind];
+  const rows = [theme.fg("accent", `${marker} ${label}`)];
+  if (block.state === "ready") {
+    if (block.diff) rows.push(renderDiff(safe(block.diff)));
+    return rows;
+  }
+  if (block.state === "partial") {
+    for (const line of block.glimpse ?? []) {
+      const color = line.startsWith("+")
+        ? "toolDiffAdded"
+        : line.startsWith("-")
+          ? "toolDiffRemoved"
+          : "dim";
+      rows.push(theme.fg(color, safe(line)));
+    }
+    rows.push(theme.fg("dim", "… writing"));
+    return rows;
+  }
+  if (block.state === "unmatched" || block.state === "invalid") {
+    rows.push(theme.fg("warning", safe(block.warning ?? "Preview unavailable.")));
+    return rows;
+  }
+  rows.push(theme.fg("dim", "Preview unavailable: file is outside the workspace or not readable."));
+  return rows;
+}
+
 /** @internal */
 export function renderPatchResult(
   details: PatchDetails | undefined,
@@ -99,6 +134,7 @@ export function renderPatchResult(
   expanded: boolean,
   isError: boolean,
   theme: Theme,
+  config: PatchRenderConfig,
 ): Text {
   if (isError || !Array.isArray(details?.files)) {
     const output = expanded ? text : text.split("\n")[0];
@@ -131,14 +167,13 @@ export function renderPatchResult(
     }
     if (file.diff === undefined)
       rows.push(dim("Diff unavailable: previous content could not be read."));
-    if (expanded && file.diff) {
+    if (file.diff) {
       // Delegate to pi's renderer: semantic diff colors plus word-level
       // highlighting on single-line modifications, matching the built-in edit
-      // tool. Slice before rendering so a +/- pair split at the cap degrades
-      // to whole-line colors instead of a dangling intra-line highlight.
-      const lines = safe(file.diff).split("\n");
-      rows.push(renderDiff(lines.slice(0, 120).join("\n")));
-      if (lines.length > 120) rows.push(theme.fg("dim", `… ${lines.length - 120} more diff lines`));
+      // tool. The folded view crops each file to the configured context and
+      // changed-line budget; the expanded view renders the diff whole.
+      const diff = safe(file.diff);
+      rows.push(renderDiff(expanded ? diff : cropDiff(diff, config)));
     }
   }
   if (!expanded && files.length > 8) rows.push(theme.fg("dim", `… ${files.length - 8} more files`));

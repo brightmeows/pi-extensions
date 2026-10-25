@@ -4,7 +4,7 @@
 
 Codex-compatible `apply_patch` editing for pi, limited to the current workspace.
 
-GPT models accustomed to Codex can use the familiar freeform patch format. The extension registers the official Lark grammar through pi's constrained sampling API and implements patch parsing, context matching, and file operations in TypeScript. It has no configuration or additional runtime library dependencies.
+GPT models accustomed to Codex can use the familiar freeform patch format. The extension registers the official Lark grammar through pi's constrained sampling API and implements patch parsing, context matching, and file operations in TypeScript. It has no additional runtime library dependencies.
 
 ## Dependencies
 
@@ -28,6 +28,31 @@ Or add to `~/.pi/agent/settings.json`:
 
 After changing extension source or loading configuration, run `/reload` or restart pi.
 
+## Configuration
+
+The folded view of the result diff is configurable via the `applyPatch` block in
+`~/.pi/agent/settings.json` (or a project-level `.pi/settings.json`, which
+replaces the global block entirely):
+
+```jsonc
+{
+  "applyPatch": {
+    "contextLines": 1,
+    "maxChangedLines": 10
+  }
+}
+```
+
+- `contextLines` — unchanged lines kept on each side of a changed region. `0`
+drops surrounding context.
+- `maxChangedLines` — changed (`-`/`+`) lines kept per changed region, counted
+across removals and additions together. The rest collapse into one hint line.
+
+These bound the folded view, which is what the TUI shows by default. `ctrl+o`
+expands the tool row to the full, uncropped diff. A non-numeric, negative, or
+below-minimum value falls back to the default above. Changes apply after
+`/reload` or a restart.
+
 ## Tool and transport
 
 The tool is named `apply_patch`. Its internal schema has one required string property, `input`.
@@ -39,6 +64,8 @@ When grammar tools are unavailable, pi advertises a function tool with the same 
 This uses the Codex custom-tool protocol, not the distinct OpenAI API built-in `type: "apply_patch"` tool. Existing pi editing tools remain available. No shell command or shell-call interception is installed.
 
 The tool is registered with `model-only` exposure: it is declared to the model, but codemode scripts cannot call it — it is absent from the script's `tools` object, whose file edits go through pi's callable file tools instead.
+
+While the model streams the patch, the tool row previews the files it has parsed so far. Completed updates use the same parser and matcher as execution to show a diff against the file on disk; additions show their proposed content and deletions show the file name. Sections still being written appear as colored patch lines. Invalid or unmatched sections show a warning without hiding the rest of the patch. Preview reads follow the same workspace boundaries as execution, including symbolic links. The preview disappears when execution starts.
 
 ## Patch format
 
@@ -113,7 +140,7 @@ M src/main.ts
 D obsolete.txt
 ```
 
-Errors are thrown through pi's tool failure contract. In the TUI the tool row header carries the file count and the aggregate `+N/-M` (omitted when a file's previous content could not be read, so no diff exists for it); the result body lists the affected files and, when expanded, their diffs capped at 120 lines per file. Complete diff details remain in the session. RPC, print, and JSON modes receive the same plain text tool results without relying on TUI components.
+Errors are thrown through pi's tool failure contract. In the TUI the tool row header carries the file count and the aggregate `+N/-M` (omitted when a file's previous content could not be read, so no diff exists for it); the result body lists the affected files and their diffs, cropped to the configured context and changed-line budget, with every cropped region marked by a hint line. `ctrl+o` shows the diffs whole; folded results list up to eight files at a time. Complete diff details remain in the session. RPC, print, and JSON modes receive the same plain text tool results without relying on TUI components.
 
 ## Compatibility baseline
 
