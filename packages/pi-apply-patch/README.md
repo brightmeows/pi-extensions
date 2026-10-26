@@ -86,7 +86,7 @@ While the model streams the patch, the tool row previews the files it has parsed
 *** End Patch
 ```
 
-Supported operations are Add, Delete, and Update, with an optional Move destination on Update. Update chunks use space-prefixed context lines, `-` removals, and `+` additions. `@@ text` searches for a context line and continues after it; subsequent chunks search forward. `*** End of File` anchors matching to the end of the file. An update chunk containing only additions appends to the file.
+Supported operations are Add, Delete, and Update, with an optional Move destination on Update. Update chunks use space-prefixed context lines, `-` removals, and `+` additions. Every line of an Add File body starts with `+`, including blank lines. Keep all hunks for one file under a single `*** Update File:` header and list them in file order; a second header for the same file is rejected. `@@ text` searches for a context line and continues after it; subsequent chunks search forward. `*** End of File` anchors matching to the end of the file. An update chunk containing only additions appends to the file.
 
 Matching attempts exact text first, then ignores trailing whitespace, then leading and trailing whitespace, then normalizes selected Unicode punctuation and spaces. Each pass searches the complete remaining range before the next, looser pass. Repeated context is accepted; the first match in the successful pass wins.
 

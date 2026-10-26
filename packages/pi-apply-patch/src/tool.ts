@@ -70,8 +70,14 @@ export function makeApplyPatchTool(
     name: "apply_patch",
     label: "apply_patch",
     promptSnippet: "Edit workspace files with Codex-format patches",
+    promptGuidelines: [
+      "Keep each file's hunks in file order under one '*** Update File:' header; a second header for the same file is rejected.",
+      "Use bare '@@' or '@@ <context line>' locators; unified-diff '@@ -N,M +N,M @@' headers are not part of this format.",
+      "Context lines must match the current file; re-read a file that changed earlier in the session before patching it.",
+      "Prefer several small patches over one huge patch; a single unmatched hunk rejects every file in the patch.",
+    ],
     description:
-      "Apply a Codex patch to files in the current workspace. Supports *** Add File:, *** Delete File:, *** Update File:, optional *** Move to:, @@ context markers, and *** End of File. Prefix added lines with +, removed lines with -, and context lines with a space. Relative and absolute paths must resolve within the workspace. Add and move operations can overwrite existing files. The entire patch is verified before writing, and failures list every unmatched hunk across every file with the closest matching locations. An I/O failure can leave partial changes. Direct tool call only — not callable from codemode scripts: it is absent from the script's `tools` object.",
+      "Apply a Codex patch to files in the current workspace. Supports *** Add File:, *** Delete File:, *** Update File:, optional *** Move to:, @@ context markers, and *** End of File. Prefix added lines with +, removed lines with -, and context lines with a space. Every line of an Add File body, including blank lines, must start with '+'. Do not wrap the patch in markdown fences. Relative and absolute paths must resolve within the workspace. Add and move operations can overwrite existing files. The entire patch is verified before writing, and failures list every unmatched hunk across every file with the closest matching locations. An I/O failure can leave partial changes. Direct tool call only — not callable from codemode scripts: it is absent from the script's `tools` object.",
     parameters: schema,
     constrainedSampling: { type: "grammar", variants: { openai_lark: CODEX_APPLY_PATCH_GRAMMAR } },
     // Model-only: the tool is built around grammar-constrained patch generation by the

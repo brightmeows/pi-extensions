@@ -24,6 +24,8 @@ test("tool uses the execution workspace and returns plain text plus serializable
   assert.equal(result.details.files[0].removed, 0);
   assert.deepEqual(JSON.parse(JSON.stringify(result.details)).files[0].path, "x");
   assert.equal(tool.name, "apply_patch");
+  assert.match(tool.description, /including blank lines/);
+  assert.ok(tool.promptGuidelines?.some((line) => line.includes("one '*** Update File:' header")));
   assert.equal(tool.constrainedSampling && tool.constrainedSampling.type, "grammar");
   assert.equal(tool.exposure, "model-only");
   assert.deepEqual(tool.parameters.required, ["input"]);
