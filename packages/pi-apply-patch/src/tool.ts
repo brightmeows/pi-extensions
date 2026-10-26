@@ -71,7 +71,7 @@ export function makeApplyPatchTool(
     label: "apply_patch",
     promptSnippet: "Edit workspace files with Codex-format patches",
     promptGuidelines: [
-      "apply_patch format: send patch text without markdown fences, commentary, or unified-diff headers ('---', '+++', '@@ -N,M +N,M @@'). Use the input string for function calls; send the patch directly for freeform calls.",
+      "apply_patch format: send patch text without markdown fences, commentary, or unified-diff headers ('---', '+++', '@@ -N,M +N,M @@').",
       "Paths: use literal, unquoted paths relative to the workspace, or absolute paths within it. Each source file may appear only once per patch; combine its edits under one '*** Update File: path' header.",
       "Add: write '*** Add File: path', then prefix EVERY content line with '+', including blank lines (a blank line is '+'). Add overwrites an existing file; use Update for partial edits. Delete: write '*** Delete File: path' with no body.",
       "Update: write '*** Update File: path', then one or more nonempty hunks, each starting with '@@' or '@@ <existing line>'. Prefix unchanged context with one space, removed lines with '-', and added lines with '+'. These prefixes come before the original indentation. Blank lines still need their corresponding prefix. Replace text with '-' old lines followed by '+' new lines.",
@@ -80,7 +80,7 @@ export function makeApplyPatchTool(
       "Locators: bare '@@' searches for the hunk's context and removed lines. '@@ <existing line>' first locates that literal source line and searches AFTER it; do not repeat the locator line as the first context or removed line. To change that line itself, use bare '@@' with surrounding context, or locate an earlier line.",
       "Insertion: include unchanged context to insert at a specific location; a hunk containing only '+' lines appends to the end of the file, even with an '@@ <existing line>' locator. To match the file's final lines, put '*** End of File' after the hunk body.",
       "Move: put '*** Move to: destination' immediately after the Update header, before its hunks. A move still requires a nonempty hunk; for a rename without content changes, include an unchanged source line prefixed with a space. The destination is overwritten if it exists.",
-      "Recovery: keep patches focused. Verification checks the whole patch before writing; a verification failure changes no files. Use the reported hunks and candidate context to correct the patch instead of resending it unchanged. An I/O failure can leave partial changes: inspect the reported completed operations and current file contents before retrying.",
+      "Recovery: keep patches focused. Verification checks the whole patch before writing; a verification failure changes no files. Use the reported hunks and candidate context to correct the patch instead of resending it unchanged.",
       [
         "Complete apply_patch example (the Update, Move, and Delete sources must already exist with the shown context):",
         "*** Begin Patch",
