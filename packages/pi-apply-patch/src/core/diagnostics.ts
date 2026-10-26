@@ -6,6 +6,8 @@ import type { HunkCandidate, HunkFailure, HunkLineDifference } from "./types.ts"
 const SCAN_BUDGET = 2_000_000;
 const MIN_CANDIDATE_SCORE = 0.5;
 const MAX_DIFFERENCES = 3;
+/** Shortest trimmed context line treated as a possibly truncated copy of a longer source line. */
+const MIN_PREFIX_LENGTH = 16;
 
 /** Diagnostic-only comparison: trim edges and collapse internal whitespace runs. */
 function collapse(text: string): string {
@@ -24,7 +26,12 @@ function lineScore(expected: string, actual: string): number {
   if (trim(expected) === trim(actual)) return 0.9;
   if (normalize(expected) === normalize(actual)) return 0.85;
   if (collapse(expected) === collapse(actual)) return 0.6;
-  return diagnosticFold(expected) === diagnosticFold(actual) ? 0.55 : 0;
+  if (diagnosticFold(expected) === diagnosticFold(actual)) return 0.55;
+  // Context copied from truncated tool output: a long-enough line that the source continues.
+  const head = trimEnd(expected);
+  return Array.from(trim(head)).length >= MIN_PREFIX_LENGTH && actual.length > head.length && actual.startsWith(head)
+    ? 0.5
+    : 0;
 }
 
 interface Window {

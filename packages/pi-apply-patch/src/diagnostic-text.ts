@@ -1,3 +1,4 @@
+import { trimEnd } from "./core/text.ts";
 import type { HunkLineDifference } from "./core/types.ts";
 
 const INVISIBLE = /[\p{White_Space}\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cc}\p{M}]/u;
@@ -12,7 +13,8 @@ function codePoint(char: string): string {
 }
 
 function escapedChar(char: string): string {
-  if (INVISIBLE.test(char)) {
+  // Ordinary spaces stay literal: escaping them hides the real difference in ordinary text.
+  if (char !== " " && INVISIBLE.test(char)) {
     const value = char.codePointAt(0)!;
     return value <= 0xffff
       ? `\\u${value.toString(16).toUpperCase().padStart(4, "0")}`
@@ -64,6 +66,10 @@ export function describeDifference(detail: HunkLineDifference): string[] {
     `actual:   ${visibleText(detail.actual, offset)}`,
     `first difference at column ${offset + 1} (Unicode code points): expected ${describe(expected[offset])}; actual ${describe(actual[offset])}`,
   ];
+  if (offset === expected.length && actual.length > expected.length && trimEnd(detail.expected))
+    rows.push(
+      `expected text is a prefix of the source line, which continues for ${actual.length - expected.length} more code points; the context line looks truncated — copy the complete source line`,
+    );
   const expectedRun = runAt(expected, offset);
   const actualRun = runAt(actual, offset);
   if (expectedRun !== "none" || actualRun !== "none")

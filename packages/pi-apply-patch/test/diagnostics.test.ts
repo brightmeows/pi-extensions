@@ -17,8 +17,9 @@ async function rejection(source: string, expected: string[]): Promise<string> {
 
 test("reports actual text, first difference, and complete adjacent whitespace run counts", async () => {
   const message = await rejection("const  x = 1;\n", ["const x = 1;"]);
-  assert.ok(message.includes('expected: "const\\u0020x\\u0020=\\u00201;"'));
-  assert.ok(message.includes('actual:   "const\\u0020\\u0020x\\u0020=\\u00201;"'));
+  assert.ok(message.includes('expected: "const x = 1;"'));
+  assert.ok(message.includes('actual:   "const  x = 1;"'));
+  assert.doesNotMatch(message, /\\u0020/);
   assert.match(message, /column 7 \(Unicode code points\)/);
   assert.match(message, /expected SPACE \(U\+0020\) × 1 at column 6; actual SPACE \(U\+0020\) × 2 at column 6/);
 });
@@ -55,4 +56,17 @@ test("bounds differing line examples and reports omitted differences", async () 
   const message = await rejection(expected.map((line) => line.replace(" ", "  ")).join("\n"), expected);
   assert.equal((message.match(/first difference at column/g) ?? []).length, 3);
   assert.match(message, /5 more differing lines omitted/);
+});
+
+test("identifies a context line copied from truncated output as a prefix of the source line", async () => {
+  const line = "Use the shared display, page, section, body, caption, label, and code roles.";
+  const message = await rejection(`intro\n${line}\n`, [line.slice(0, 40)]);
+  assert.match(message, /closest match at line 2/);
+  assert.match(message, /prefix of the source line, which continues for \d+ more code points; the context line looks truncated/);
+});
+
+test("does not treat short context lines as truncated prefixes", async () => {
+  const message = await rejection("return value;\n", ["return"]);
+  assert.doesNotMatch(message, /closest match/);
+  assert.doesNotMatch(message, /looks truncated/);
 });

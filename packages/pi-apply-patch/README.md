@@ -128,13 +128,14 @@ When context matching fails, the error summarizes failed hunks across every file
 - up to three differing line examples showing expected and actual text, the first differing column (1-based Unicode code points), character codes, and adjacent invisible-character run counts; additional differences are counted;
 - inserted or missing blank lines between matching nonblank lines, with expected and actual line counts;
 - an exact match that lies outside the searched range (earlier in the file, or before an `*** End of File` anchor) — usually a chunk-ordering mistake;
-- whether the hunk's replacement text already occurs in the file, meaning the hunk was likely applied before.
+- whether the hunk's replacement text already occurs in the file, meaning the hunk was likely applied before;
+- a context line that is a prefix of a longer source line, which usually means it was copied from truncated tool output.
 
-Spaces, tabs, zero-width characters, directional controls, and combining marks are rendered as visible Unicode escapes. These escapes are diagnostic notation; a patch must contain the literal source characters. Long line examples show an excerpt around the first difference. For example, a source with two inline spaces where the patch expects one reports:
+Tabs, unusual spaces, zero-width characters, directional controls, and combining marks are rendered as visible Unicode escapes; ordinary spaces stay literal so that the surrounding text remains readable. These escapes are diagnostic notation; a patch must contain the literal source characters. Long line examples show an excerpt around the first difference. For example, a source with two inline spaces where the patch expects one reports:
 
 ```text
-expected: "const\u0020x\u0020=\u00201;"
-actual:   "const\u0020\u0020x\u0020=\u00201;"
+expected: "const x = 1;"
+actual:   "const  x = 1;"
 first difference at column 7 (Unicode code points): expected "x" (U+0078); actual SPACE (U+0020)
 adjacent invisible run: expected SPACE (U+0020) × 1 at column 6; actual SPACE (U+0020) × 2 at column 6
 ```
@@ -150,6 +151,13 @@ Success. Updated the following files:
 A src/greeting.ts
 M src/main.ts
 D obsolete.txt
+```
+
+When a hunk's context occurs more than once in the file, or matched only after ignoring leading whitespace or normalizing Unicode punctuation, the summary appends match notes naming the file, hunk, and line so the model can verify the location and the indentation of added lines:
+
+```text
+Match notes (the patch was applied; verify these locations):
+- src/main.ts hunk 2 at line 40: context occurs 3 times in the file; this occurrence was edited
 ```
 
 Errors are thrown through pi's tool failure contract. In the TUI the tool row header carries the file count and the aggregate `+N/-M` (omitted when a file's previous content could not be read, so no diff exists for it); the result body lists the affected files and their diffs, cropped to the configured context and changed-line budget, with every cropped region marked by a hint line. `ctrl+o` shows the diffs whole; folded results list up to eight files at a time. Complete diff details remain in the session. RPC, print, and JSON modes receive the same plain text tool results without relying on TUI components.

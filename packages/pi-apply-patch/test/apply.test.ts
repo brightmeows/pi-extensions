@@ -384,3 +384,16 @@ test("a symlink workspace root supports both logical and canonical absolute path
   );
   assert.deepEqual(fs.snapshot(), { canonical: "x\n", logical: "y\n" });
 });
+
+test("reports successful matches that may not be the intended location", async () => {
+  const fs = new MemoryFileSystem({ dup: "x\ny\nx\n", indent: "  a\n", plain: "q\n" });
+  const result = await applyPatch(
+    patch("*** Update File: dup\n@@\n-x\n+z\n*** Update File: indent\n@@\n-a\n+b\n*** Update File: plain\n@@\n-q\n+r"),
+    fs.context(),
+  );
+  const summary = formatSummary(result.files);
+  assert.match(summary, /^Success\. Updated the following files:\nM dup\nM indent\nM plain\n\nMatch notes/);
+  assert.match(summary, /- dup hunk 1 at line 1: context occurs 2 times in the file; this occurrence was edited/);
+  assert.match(summary, /- indent hunk 1 at line 1: matched only after ignoring leading and trailing whitespace/);
+  assert.doesNotMatch(summary, /plain hunk/);
+});

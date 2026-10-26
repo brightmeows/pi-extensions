@@ -84,7 +84,7 @@ class UnmatchedUpdateError extends Error {
 
 /** @internal */
 export function formatSummary(
-  files: readonly Pick<FileChange, "kind" | "path" | "moveTo">[],
+  files: readonly Pick<FileChange, "kind" | "path" | "moveTo" | "hunks">[],
 ): string {
   const rows = (
     [
@@ -97,7 +97,30 @@ export function formatSummary(
       .filter((file) => file.kind === kind)
       .map((file) => `${prefix} ${file.moveTo ?? file.path}`),
   );
-  return `Success. Updated the following files:\n${rows.join("\n")}`;
+  const notes = files.flatMap((file) => matchNotes(file.moveTo ?? file.path, file.hunks ?? []));
+  return [
+    `Success. Updated the following files:\n${rows.join("\n")}`,
+    ...(notes.length ? ["", "Match notes (the patch was applied; verify these locations):", ...notes] : []),
+  ].join("\n");
+}
+
+/**
+ * Successful matches the model may not have intended: the context also occurs
+ * elsewhere, or it matched only after ignoring leading whitespace or folding
+ * Unicode punctuation, so added lines keep the patch's own indentation.
+ */
+function matchNotes(path: string, hunks: readonly HunkMatchInfo[]): string[] {
+  return hunks.flatMap((hunk) => {
+    const where = `${path} hunk ${hunk.hunk} at line ${hunk.line}`;
+    const notes: string[] = [];
+    if (hunk.occurrences > 1)
+      notes.push(`- ${where}: context occurs ${hunk.occurrences} times in the file; this occurrence was edited`);
+    if (hunk.strategy === "trim" || hunk.strategy === "unicode")
+      notes.push(
+        `- ${where}: matched only after ${hunk.strategy === "trim" ? "ignoring leading and trailing whitespace" : "normalizing whitespace and Unicode punctuation"}; check the indentation and characters of added lines`,
+      );
+    return notes;
+  });
 }
 
 async function verifyTarget(
