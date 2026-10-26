@@ -71,22 +71,34 @@ While the model streams the patch, the tool row previews the files it has parsed
 
 ```diff
 *** Begin Patch
-*** Add File: src/greeting.ts
-+export const greeting = "Hello";
+*** Add File: greeting.txt
++Hello
++
++Welcome
 *** Update File: src/main.ts
-@@ function main() {
--console.log("Hi");
-+console.log("Hello");
+@@ function greet() {
+-  return "Hi";
++  return "Hello";
+ }
 *** Update File: old-name.txt
 *** Move to: docs/new-name.txt
 @@
--old text
-+new text
+ keep this text
 *** Delete File: obsolete.txt
 *** End Patch
 ```
 
-Supported operations are Add, Delete, and Update, with an optional Move destination on Update. Update chunks use space-prefixed context lines, `-` removals, and `+` additions. Every line of an Add File body starts with `+`, including blank lines. Keep all hunks for one file under a single `*** Update File:` header and list them in file order; a second header for the same file is rejected. `@@ text` searches for a context line and continues after it; subsequent chunks search forward. `*** End of File` anchors matching to the end of the file. An update chunk containing only additions appends to the file.
+Send the patch itself without Markdown fences or commentary. Function calls use the `input` string; freeform calls send the patch directly. The example assumes the Update, Move, and Delete sources already exist.
+
+- **Add:** every content line starts with `+`, including blank lines (written as `+`).
+- **Delete:** the file header has no body.
+- **Update:** use nonempty hunks starting with `@@` or `@@ <existing line>`. Prefix unchanged context with a space, removals with `-`, and additions with `+`, before the original indentation. Blank lines also need their corresponding prefix. Unified-diff headers such as `@@ -N,M +N,M @@` are not supported.
+- **Multiple edits:** each source file appears once per patch. Keep all its hunks under one Update header, in file order, with no overlapping context. Every hunk matches the file's content before this update; later hunks cannot match text inserted by earlier ones. Combine nearby edits into one hunk.
+- **Locators:** `@@ text` locates a source line and searches after it. Do not repeat that line as the first context or removed line. To edit the locator line itself, use bare `@@` with surrounding context or locate an earlier line.
+- **Insertion:** include unchanged context to insert at a specific location. A hunk containing only additions appends to the file, even when it has a text locator. `*** End of File` after a hunk body anchors matching to the end of the file.
+- **Move:** place `*** Move to: destination` immediately after the Update header. A move requires a nonempty hunk; a context-only hunk preserves the content when renaming.
+
+Read the relevant source before constructing an update. Reuse known current content and re-read when it may be stale. Copy removed and context lines literally, and include enough surrounding context to distinguish repeated snippets. Keep patches focused; after a failure, use the diagnostics and current file contents to correct the patch instead of resending it unchanged.
 
 Matching attempts exact text first, then ignores trailing whitespace, then leading and trailing whitespace, then normalizes selected Unicode punctuation and spaces. Each pass searches the complete remaining range before the next, looser pass. Repeated context is accepted; the first match in the successful pass wins.
 

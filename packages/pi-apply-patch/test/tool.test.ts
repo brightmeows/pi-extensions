@@ -24,11 +24,29 @@ test("tool uses the execution workspace and returns plain text plus serializable
   assert.equal(result.details.files[0].removed, 0);
   assert.deepEqual(JSON.parse(JSON.stringify(result.details)).files[0].path, "x");
   assert.equal(tool.name, "apply_patch");
-  assert.match(tool.description, /including blank lines/);
-  assert.ok(tool.promptGuidelines?.some((line) => line.includes("one '*** Update File:' header")));
   assert.equal(tool.constrainedSampling && tool.constrainedSampling.type, "grammar");
   assert.equal(tool.exposure, "model-only");
   assert.deepEqual(tool.parameters.required, ["input"]);
+});
+
+test("the model-facing example creates blank lines, updates, renames, and deletes", async () => {
+  const fs = new MemoryFileSystem({
+    "src/main.ts": 'function greet() {\n  return "Hi";\n}\n',
+    "old-name.txt": "keep this text\n",
+    "obsolete.txt": "remove this file\n",
+  });
+  const tool = makeApplyPatchTool({ fs, withFileQueue: fs.context().withFileQueue });
+  const example = tool.promptGuidelines?.find((line) => line.includes("*** Begin Patch\n"));
+  assert.ok(example, "Guidelines must include a complete executable patch example");
+  const input = example.slice(example.indexOf("*** Begin Patch\n"));
+
+  await tool.execute("example", { input }, undefined, undefined, { cwd: ROOT } as ExtensionContext);
+
+  assert.deepEqual(fs.snapshot(), {
+    "greeting.txt": "Hello\n\nWelcome\n",
+    "src/main.ts": 'function greet() {\n  return "Hello";\n}\n',
+    "docs/new-name.txt": "keep this text\n",
+  });
 });
 
 test("tool failures reject so the framework can mark them as errors", async () => {
