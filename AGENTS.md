@@ -49,10 +49,10 @@ publish.{js,sh}  发布脚本
 AI 辅助的提交必须在 message 尾部附 `Co-Authored-By` trailer，记录操作 agent：
 
 ```
-Co-Authored-By: <PI_MODEL 环境变量的值> <noreply@pi.dev>
+Co-Authored-By: <模型 ID> <noreply@pi.dev>
 ```
 
-- 模型名以 `PI_MODEL` 环境变量为准，提交前读取，不凭记忆手写
+- 模型 ID 取自 `PI_MODEL` 环境变量，提交前读取，不凭记忆或沿用上一个提交的署名；只保留 provider 发布的模型 ID，去掉渠道标记（如 `[Kiro]`）和推理档位等变体后缀（如 `-thinking`），例如 `[Kiro]claude-opus-5-5-thinking` 写作 `claude-opus-5-5`
 - 邮箱统一 `noreply@pi.dev`，不使用各 provider 域名
 
 ### 示例
