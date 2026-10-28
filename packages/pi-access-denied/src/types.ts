@@ -4,7 +4,7 @@
 
 /** Access control mode. */
 export type AccessMode = "prompt" | "deny" | "allow";
-export type SupportedTool = "write" | "edit" | "bash";
+export type SupportedTool = "write" | "edit" | "bash" | "apply_patch";
 
 /** Per-path choice chosen from the authorization panel. */
 export type Choice = "allow" | "always-allow" | "deny" | "always-deny";
@@ -61,7 +61,7 @@ export interface AccessDeniedConfig {
    * A same-depth allow/deny conflict resolves to deny.
    */
   deniedPaths: Record<string, string | null>;
-  /** Built-in tools to gate. Defaults to `["write", "edit", "bash"]`. */
+  /** Built-in tools to gate. Defaults to `["write", "edit", "bash", "apply_patch"]`. */
   tools: SupportedTool[];
 }
 
@@ -69,5 +69,5 @@ export const DEFAULT_CONFIG: AccessDeniedConfig = {
   mode: "prompt",
   allowedPaths: [],
   deniedPaths: {},
-  tools: ["write", "edit", "bash"],
+  tools: ["write", "edit", "bash", "apply_patch"],
 };

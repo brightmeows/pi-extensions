@@ -28,7 +28,7 @@ function readSettingsFile(filePath: string): any {
 }
 
 const VALID_MODES: ReadonlySet<AccessMode> = new Set(["prompt", "deny", "allow"]);
-const VALID_TOOLS: ReadonlySet<SupportedTool> = new Set(["write", "edit", "bash"]);
+const VALID_TOOLS: ReadonlySet<SupportedTool> = new Set(["write", "edit", "bash", "apply_patch"]);
 
 function asMode(value: unknown): AccessMode | undefined {
   return typeof value === "string" && VALID_MODES.has(value as AccessMode)

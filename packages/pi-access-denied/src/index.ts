@@ -34,6 +34,7 @@ import { loadConfig } from "./config.ts";
 import { PathManager } from "./path-manager.ts";
 import { paths } from "./paths.ts";
 import { extractBashTargetsDetailed, type ExtractedTarget } from "./bash-extract.ts";
+import { extractPatchTargets } from "./patch-extract.ts";
 import {
   DEFAULT_CONFIG,
   type AccessMode,
@@ -45,7 +46,12 @@ import { AuthPanel, CHOICE_LABELS, CHOICES } from "./auth-panel.ts";
 
 const GLOBAL_KEY = "__piAccessDenied";
 const STATUS_KEY = "access-denied";
-const SUPPORTED_TOOLS: ReadonlySet<string> = new Set<SupportedTool>(["write", "edit", "bash"]);
+const SUPPORTED_TOOLS: ReadonlySet<string> = new Set<SupportedTool>([
+  "write",
+  "edit",
+  "bash",
+  "apply_patch",
+]);
 
 function isSupportedTool(toolName: string): toolName is SupportedTool {
   return SUPPORTED_TOOLS.has(toolName);
@@ -198,6 +204,17 @@ export default function (pi: ExtensionAPI) {
       targets = [{ path: paths.target(event.input.path, cwd) }];
     } else if (isToolCallEventType("bash", event)) {
       targets = extractBashTargetsDetailed(event.input.command, cwd);
+    } else if (event.toolName === "apply_patch") {
+      const input = (event.input as { input?: unknown }).input;
+      if (typeof input !== "string") return;
+      const parsed = extractPatchTargets(input, cwd);
+      if (parsed.error) {
+        // A patch the gate cannot parse cannot be checked; fail closed unless
+        // the user has explicitly disabled the gate for this session.
+        if (state.mode === "allow") return;
+        return { block: true, reason: `access-denied: ${parsed.error}` };
+      }
+      targets = [...parsed.targets];
     } else {
       return; // tool not understood here — nothing to gate
     }
