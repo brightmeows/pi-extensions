@@ -70,3 +70,13 @@ test("does not treat short context lines as truncated prefixes", async () => {
   assert.doesNotMatch(message, /closest match/);
   assert.doesNotMatch(message, /looks truncated/);
 });
+
+test("omits the escape notice when the report contains no escape sequences", async () => {
+  const message = await rejection("const x = 1;\n", ["const y = 1;"]);
+  assert.doesNotMatch(message, /Quoted text uses diagnostic escapes/);
+});
+
+test("keeps the escape notice when the report contains an escaped code point", async () => {
+  const message = await rejection("😀al\u200Bpha\n", ["😀alpha"]);
+  assert.match(message, /Quoted text uses diagnostic escapes/);
+});

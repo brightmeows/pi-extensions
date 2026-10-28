@@ -98,9 +98,12 @@ export function renderRejection(report: RejectionReport): string {
     sections.push([`verified but not written (whole patch rejected): ${listed}${overflow}`]);
   }
   const total = report.rejected.length + report.verified.length;
+  const hasEscapes = sections.some((section) =>
+    section.some((line) => /\\u(?:[0-9A-Fa-f]{4}|\{[0-9A-Fa-f]+\})/.test(line)),
+  );
   return [
     `apply_patch verification failed: ${report.rejected.length} of ${total} operations failed; no files were written.`,
-    ...(report.rejected.some((file) => file.outcomes)
+    ...(hasEscapes
       ? ["Quoted text uses diagnostic escapes; patch lines must contain the literal characters, not these escape sequences."]
       : []),
     "",
