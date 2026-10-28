@@ -15,6 +15,17 @@ async function rejection(source: string, expected: string[]): Promise<string> {
   return error.message;
 }
 
+async function rejectionFor(source: string, input: string): Promise<string> {
+  const fs = new MemoryFileSystem({ a: source });
+  const error = await applyPatch(input, fs.context()).then(
+    () => assert.fail("Expected an unmatched patch"),
+    (error: Error) => error,
+  );
+  assert.equal(fs.writes.length, 0);
+  assert.deepEqual(fs.snapshot(), { a: source });
+  return error.message;
+}
+
 test("reports actual text, first difference, and complete adjacent whitespace run counts", async () => {
   const message = await rejection("const  x = 1;\n", ["const x = 1;"]);
   assert.ok(message.includes('expected: "const x = 1;"'));
@@ -69,4 +80,49 @@ test("does not treat short context lines as truncated prefixes", async () => {
   const message = await rejection("return value;\n", ["return"]);
   assert.doesNotMatch(message, /closest match/);
   assert.doesNotMatch(message, /looks truncated/);
+});
+
+test("reports every earlier exact match when an out-of-order hunk is ambiguous", async () => {
+  const source = "A\nsame\nB\nA\nsame\nB\ntail\n";
+  const patch = [
+    "*** Begin Patch",
+    "*** Update File: a",
+    "@@",
+    " B",
+    " A",
+    " same",
+    "-B",
+    "+B2",
+    "@@",
+    " A",
+    "-same",
+    "+CHANGED",
+    "*** End Patch",
+  ].join("\n");
+  const message = await rejectionFor(source, patch);
+  assert.match(message, /context matches at lines 1, 4 before the search start/);
+  assert.match(message, /ambiguous/);
+});
+
+test("reports a single earlier exact match with the hunk-order hint", async () => {
+  const source = "line1\nline2\nline3\nline4\nline5\n";
+  const patch = [
+    "*** Begin Patch",
+    "*** Update File: a",
+    "@@",
+    " line4",
+    "-line5",
+    "+LINE5",
+    "@@",
+    " line2",
+    "-line3",
+    "+LINE3",
+    "*** End Patch",
+  ].join("\n");
+  const message = await rejectionFor(source, patch);
+  assert.match(
+    message,
+    /context matches at line 2, outside the searched range; move this hunk earlier/,
+  );
+  assert.doesNotMatch(message, /ambiguous/);
 });

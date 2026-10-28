@@ -63,6 +63,8 @@ export interface HunkCandidate {
   readonly difference: "exact" | "whitespace" | "content";
   /** The candidate lies before the position the hunk's forward search started from. */
   readonly beforeSearchStart: boolean;
+  /** All exact match lines before the search start, when more than one. */
+  readonly earlierMatches?: readonly number[];
   /** Bounded examples of the actual differences, never used for matching. */
   readonly details?: readonly HunkLineDifference[];
   readonly omittedDifferences?: number;
