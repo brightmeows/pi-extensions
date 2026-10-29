@@ -119,7 +119,7 @@ Your home directory, `/etc`, `/var`, and `/usr` are not generally allowed. Add a
 
 `apply_patch` paths come from the patch headers: `*** Add File:`, `*** Update File:`, `*** Delete File:`, and `*** Move to:`. The extension checks every source and move destination, deduplicates them, and applies the same allow/deny/prompt rules as `write` and `edit`.
 
-The patch parser is strict. If a `***` line is not a recognized header or the envelope is incomplete, `prompt` and `deny` modes block the call with a reason; `allow` mode passes it through because the gate is disabled for that session. This keeps a parser gap from silently bypassing the outside-path check.
+The adapter recognizes the tool name `apply_patch` and patch text in its `input` field, regardless of which extension provides the tool. Paths are literal: `~` and `$HOME` are not expanded. It scans declared paths without validating the patch envelope or hunks, resolving symlinks, or reading files. Unknown syntax is left to the tool itself; any detected paths still pass through the normal rules in every mode.
 
 ## What bash checks cover
 
@@ -188,6 +188,8 @@ In RPC/ACP hosts, such as an editor connected through pi-acp, requests appear as
 In print/JSON mode there is no interactive response, so requests in `prompt` mode are blocked as dismissed. Set `mode` to `deny` to block outside paths without interaction, or `allow` to let them through. Explicit deny rules still apply.
 
 ## Development
+
+Tool adapters live in `src/tools/`. Each adapter implements `extract(input, cwd)` and returns paths with optional display context. Add a module and register it in `src/tools/index.ts`; supported tool names, configuration validation, and default selection all derive from that table. `file.ts` handles `write` and `edit`, `bash.ts` uses the shell analyzer, and `apply-patch.ts` scans Codex-format patch headers. Adapters depend on input formats, not on the extensions that provide the tools. Rule decisions and authorization UI stay in the shared gate.
 
 Production code and tests share the path API in `src/paths.ts`. Use `paths` for the host environment or `createPathAPI(environment)` for a fixed target environment. The API owns normalization, joining, resolution, equality, directory containment, home expansion, and Git Bash drive conversion. `target(input, cwd)` expands tool/config path syntax; `resolve(...parts)` handles literal values without expanding stored `~` or `$HOME` again. `toNative()` converts paths at native filesystem boundaries.
 

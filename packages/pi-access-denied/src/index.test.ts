@@ -384,12 +384,15 @@ test("deny mode blocks apply_patch paths outside the project", async () => {
   assert.match((blocked as any).reason, /outside-patch\.txt/);
 });
 
-test("apply_patch parse failures fail closed outside allow mode", async () => {
+test("allow mode still enforces explicit denies for detected patch paths", async () => {
   project = fs.mkdtempSync(path.join(path.temp, "ad-patch-parse-"));
+  const denied = path.join(path.root(project), "blocked-patch.txt");
   fs.mkdirSync(path.join(project, ".pi"));
   fs.writeFileSync(
     path.join(project, ".pi", "settings.json"),
-    JSON.stringify({ accessDenied: { mode: "deny" } }),
+    JSON.stringify({
+      accessDenied: { mode: "allow", deniedPaths: [{ paths: [denied], reason: "use another file" }] },
+    }),
   );
 
   const handlers = new Map<string, Handler>();
@@ -424,10 +427,12 @@ test("apply_patch parse failures fail closed outside allow mode", async () => {
       type: "tool_call",
       toolCallId: "patch-parse",
       toolName: "apply_patch",
-      input: { input: "*** Begin Patch\n*** Nope: x\n*** End Patch" },
+      input: {
+        input: `<<'EOF'\n*** Begin Patch\n*** Unknown: x\n*** Add File: ${denied}\n+x\n*** End Patch\nEOF`,
+      },
     },
     ctx,
   );
   assert.ok(blocked && typeof blocked === "object" && "block" in blocked);
-  assert.match((blocked as any).reason, /Unsupported patch marker/);
+  assert.match((blocked as any).reason, /use another file/);
 });
