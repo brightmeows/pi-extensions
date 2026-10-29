@@ -44,6 +44,8 @@ export interface HunkFailure {
   readonly pattern: readonly string[];
   /** 1-based source line the forward search started from. */
   readonly searchFrom: number;
+  /** The constraint that established the search start. */
+  readonly searchBoundary: "start" | "hunk" | "anchor" | "eof";
   /** True when the chunk carried *** End of File, so only the last window was searched. */
   readonly endOfFile: boolean;
   /** Closest windows in the file, most explanatory first. */

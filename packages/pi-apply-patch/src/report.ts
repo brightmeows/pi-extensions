@@ -37,7 +37,7 @@ function echoPattern(pattern: readonly string[]): string[] {
   ];
 }
 
-function candidateLine(candidate: HunkCandidate, total: number): string {
+function candidateLine(candidate: HunkCandidate, failure: HunkFailure): string {
   if (candidate.lineCount)
     return `closest match at line ${candidate.line}: blank-line alignment differs (expected ${candidate.lineCount.expected} lines, actual ${candidate.lineCount.actual} lines)`;
   if (candidate.difference === "exact") {
@@ -46,13 +46,21 @@ function candidateLine(candidate: HunkCandidate, total: number): string {
       const shown = lines.slice(0, MAX_EARLIER_MATCHES).join(", ");
       const more =
         lines.length > MAX_EARLIER_MATCHES ? `, … ${lines.length - MAX_EARLIER_MATCHES} more` : "";
-      return `context matches at lines ${shown}${more} before the search start; the match is ambiguous — add surrounding context or move the hunk to the intended occurrence`;
+      return `context matches at lines ${shown}${more} before the search start; the match is ambiguous — add surrounding context to identify the intended occurrence`;
     }
-    return `context matches at line ${candidate.line}, outside the searched range; move this hunk earlier (hunks must be in file order)`;
+    const hint =
+      failure.searchBoundary === "eof"
+        ? "; this match is not at the end of the file — check the *** End of File constraint"
+        : failure.searchBoundary === "anchor"
+          ? "; this match is at or before the @@ anchor — check the anchor and intended context"
+          : failure.searchBoundary === "hunk"
+            ? "; move this hunk earlier (hunks must be in file order)"
+            : "";
+    return `context matches at line ${candidate.line}, outside the searched range${hint}`;
   }
   const kind =
     candidate.difference === "whitespace" ? "whitespace-only drift" : "content differences";
-  return `closest match at line ${candidate.line}: ${candidate.differing} of ${total} context lines changed (${kind})`;
+  return `closest match at line ${candidate.line}: ${candidate.differing} of ${failure.pattern.length} context lines changed (${kind})`;
 }
 
 function hunkLines(hunk: number, failure: HunkFailure): string[] {
@@ -66,7 +74,7 @@ function hunkLines(hunk: number, failure: HunkFailure): string[] {
   if (failure.anchor === undefined)
     for (const line of echoPattern(failure.pattern)) rows.push(`| ${line}`);
   for (const candidate of failure.candidates) {
-    rows.push(candidateLine(candidate, failure.pattern.length));
+    rows.push(candidateLine(candidate, failure));
     for (const detail of candidate.details ?? [])
       rows.push(...describeDifference(detail).map((line) => `  ${line}`));
     if (candidate.omittedDifferences)

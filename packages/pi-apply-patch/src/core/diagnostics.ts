@@ -242,6 +242,7 @@ export interface ContextSearch {
   readonly replacement: readonly string[];
   /** 0-based position the forward search started from. */
   readonly start: number;
+  readonly searchBoundary: HunkFailure["searchBoundary"];
   readonly endOfFile: boolean;
 }
 
@@ -257,6 +258,7 @@ export function diagnoseContext(
     anchor: search.anchor,
     pattern: search.pattern,
     searchFrom: start + 1,
+    searchBoundary: search.endOfFile ? "eof" : search.searchBoundary,
     endOfFile: search.endOfFile,
     candidates: findCandidates(lines, search.pattern, start),
     alreadyAppliedAt:
