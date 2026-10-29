@@ -55,8 +55,8 @@ the same canonical-path, duplicate-target, and symlink checks still apply.
 `contextLines` and `maxChangedLines` bound the folded view, which is what the
 TUI shows by default. `ctrl+o` expands the tool row to the full, uncropped
 diff. A non-numeric, negative, or below-minimum value falls back to the default
-above. `workspaceOnly` changes execution only. Changes apply after `/reload` or
-a restart.
+above. `workspaceOnly` applies to both execution and streaming preview reads.
+Changes apply after `/reload` or a restart.
 
 ## Tool and transport
 
@@ -119,7 +119,7 @@ The workspace is `ctx.cwd` at execution time. With the default `workspaceOnly: t
 
 Set `applyPatch.workspaceOnly` to `false` to allow Add, Update, Delete, and Move outside the workspace. Relative and absolute paths are both accepted; the extension still resolves canonical paths, deduplicates targets, rejects dangling symlinks, and rejects directory targets. This is an explicit opt-in.
 
-The extension performs these checks itself and does not integrate with a separate permission extension. Path checks are not an OS sandbox: they do not isolate other processes, eliminate filesystem races, or track hard-link destinations outside the workspace. With `workspaceOnly: false`, `apply_patch` can write or delete anywhere the Pi process can access; use `pi-access-denied` or OS/container isolation when that boundary matters.
+The extension performs these checks itself and does not integrate with a separate permission extension. Path checks are not an OS sandbox: they do not isolate other processes, eliminate filesystem races, or track hard-link destinations outside the workspace. With `workspaceOnly: false`, `apply_patch` can write or delete anywhere the pi process can access.
 
 All operations are parsed, paths are checked, and file changes are verified before the first write. Participating files share pi's mutation queues, acquired in a consistent order. Paths are rechecked after waiting and before mutations. For nonexistent targets beneath directory symlinks, pi's built-in tools can use a different queue key; concurrent creation through those aliases is not guaranteed to serialize across tools. If an earlier move changes a later source, the later update is matched against that source's current content.
 
