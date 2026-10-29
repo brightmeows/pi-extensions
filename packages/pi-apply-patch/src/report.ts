@@ -4,6 +4,7 @@ import { DiagnosticText } from "./diagnostic-text.ts";
 /** Per-file reporting budget: keep model-facing failures actionable, not overwhelming. */
 const MAX_FAILED_HUNKS = 6;
 const MAX_ECHO_LINES = 6;
+const MAX_EARLIER_MATCHES = 6;
 const MAX_VERIFIED_LISTED = 12;
 
 export interface RejectedFile {
@@ -36,14 +37,30 @@ function echoPattern(pattern: readonly string[], text: DiagnosticText): string[]
   ];
 }
 
-function candidateLine(candidate: HunkCandidate, total: number): string {
+function candidateLine(candidate: HunkCandidate, failure: HunkFailure): string {
   if (candidate.lineCount)
     return `closest match at line ${candidate.line}: blank-line alignment differs (expected ${candidate.lineCount.expected} lines, actual ${candidate.lineCount.actual} lines)`;
-  if (candidate.difference === "exact")
-    return `context matches at line ${candidate.line}, outside the searched range`;
+  if (candidate.difference === "exact") {
+    if (candidate.earlierMatches && candidate.earlierMatches.length > 1) {
+      const lines = candidate.earlierMatches;
+      const shown = lines.slice(0, MAX_EARLIER_MATCHES).join(", ");
+      const more =
+        lines.length > MAX_EARLIER_MATCHES ? `, … ${lines.length - MAX_EARLIER_MATCHES} more` : "";
+      return `context matches at lines ${shown}${more} before the search start; the match is ambiguous — add surrounding context to identify the intended occurrence`;
+    }
+    const hint =
+      failure.searchBoundary === "eof"
+        ? "; this match is not at the end of the file — check the *** End of File constraint"
+        : failure.searchBoundary === "anchor"
+          ? "; this match is at or before the @@ anchor — check the anchor and intended context"
+          : failure.searchBoundary === "hunk"
+            ? "; move this hunk earlier (hunks must be in file order)"
+            : "";
+    return `context matches at line ${candidate.line}, outside the searched range${hint}`;
+  }
   const kind =
     candidate.difference === "whitespace" ? "whitespace-only drift" : "content differences";
-  return `closest match at line ${candidate.line}: ${candidate.differing} of ${total} context lines changed (${kind})`;
+  return `closest match at line ${candidate.line}: ${candidate.differing} of ${failure.pattern.length} context lines changed (${kind})`;
 }
 
 function hunkLines(hunk: number, failure: HunkFailure, text: DiagnosticText): string[] {
@@ -57,7 +74,7 @@ function hunkLines(hunk: number, failure: HunkFailure, text: DiagnosticText): st
   if (failure.anchor === undefined)
     for (const line of echoPattern(failure.pattern, text)) rows.push(`| ${line}`);
   for (const candidate of failure.candidates) {
-    rows.push(candidateLine(candidate, failure.pattern.length));
+    rows.push(candidateLine(candidate, failure));
     for (const detail of candidate.details ?? [])
       rows.push(...text.describeDifference(detail).map((line) => `  ${line}`));
     if (candidate.omittedDifferences)

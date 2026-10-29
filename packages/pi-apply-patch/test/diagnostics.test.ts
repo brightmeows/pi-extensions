@@ -16,6 +16,17 @@ async function rejection(source: string, expected: string[]): Promise<string> {
   return error.message;
 }
 
+async function rejectionFor(source: string, input: string): Promise<string> {
+  const fs = new MemoryFileSystem({ a: source });
+  const error = await applyPatch(input, fs.context()).then(
+    () => assert.fail("Expected an unmatched patch"),
+    (error: Error) => error,
+  );
+  assert.equal(fs.writes.length, 0);
+  assert.deepEqual(fs.snapshot(), { a: source });
+  return error.message;
+}
+
 test("reports actual text, first difference, and complete adjacent whitespace run counts", async () => {
   const message = await rejection("const  x = 1;\n", ["const x = 1;"]);
   assert.ok(message.includes('expected: "const x = 1;"'));
@@ -70,6 +81,99 @@ test("does not treat short context lines as truncated prefixes", async () => {
   const message = await rejection("return value;\n", ["return"]);
   assert.doesNotMatch(message, /closest match/);
   assert.doesNotMatch(message, /looks truncated/);
+});
+
+test("reports every earlier exact match when an out-of-order hunk is ambiguous", async () => {
+  const source = "A\nsame\nB\nA\nsame\nB\ntail\n";
+  const patch = [
+    "*** Begin Patch",
+    "*** Update File: a",
+    "@@",
+    " B",
+    " A",
+    " same",
+    "-B",
+    "+B2",
+    "@@",
+    " A",
+    "-same",
+    "+CHANGED",
+    "*** End Patch",
+  ].join("\n");
+  const message = await rejectionFor(source, patch);
+  assert.match(message, /context matches at lines 1, 4 before the search start/);
+  assert.match(message, /ambiguous/);
+});
+
+test("reports a single earlier exact match with the hunk-order hint", async () => {
+  const source = "line1\nline2\nline3\nline4\nline5\n";
+  const patch = [
+    "*** Begin Patch",
+    "*** Update File: a",
+    "@@",
+    " line4",
+    "-line5",
+    "+LINE5",
+    "@@",
+    " line2",
+    "-line3",
+    "+LINE3",
+    "*** End Patch",
+  ].join("\n");
+  const message = await rejectionFor(source, patch);
+  assert.match(
+    message,
+    /context matches at line 2, outside the searched range; move this hunk earlier/,
+  );
+  assert.doesNotMatch(message, /ambiguous/);
+});
+
+test("explains an EOF constraint without recommending hunk reordering", async () => {
+  const message = await rejectionFor("target\ntail\n", [
+    "*** Begin Patch", "*** Update File: a", "@@", "-target", "+changed",
+    "*** End of File", "*** End Patch",
+  ].join("\n"));
+  assert.match(message, /check the \*\*\* End of File constraint/);
+  assert.doesNotMatch(message, /move this hunk earlier/);
+});
+
+test("explains a matched anchor that excludes the context", async () => {
+  const message = await rejectionFor("target\nanchor\ntail\n", [
+    "*** Begin Patch", "*** Update File: a", "@@ anchor", "-target", "+changed",
+    "*** End Patch",
+  ].join("\n"));
+  assert.match(message, /before the @@ anchor/);
+  assert.doesNotMatch(message, /move this hunk earlier/);
+});
+
+test("retains the anchor boundary after its hunk fails to match", async () => {
+  const message = await rejectionFor("target\nanchor\ntail\n", [
+    "*** Begin Patch", "*** Update File: a", "@@ anchor", "-missing", "+changed",
+    "@@", "-target", "+changed", "*** End Patch",
+  ].join("\n"));
+  assert.match(message, /hunk 2: context lines not found \(search started at line 3\)/);
+  assert.match(message, /before the @@ anchor/);
+  assert.doesNotMatch(message, /move this hunk earlier/);
+});
+
+test("searches a missing anchor from the cursor even when its hunk has an EOF marker", async () => {
+  const message = await rejectionFor("anchor\nmiddle\ntail\n", [
+    "*** Begin Patch", "*** Update File: a", "@@", "-middle", "+changed",
+    "@@ anchor", "-tail", "+changed", "*** End of File", "*** End Patch",
+  ].join("\n"));
+  assert.match(message, /anchor "anchor" not found \(search started at line 3\)/);
+  assert.match(message, /move this hunk earlier/);
+  assert.doesNotMatch(message, /anchored to the end of the file/);
+});
+
+test("bounds ambiguous earlier matches and never recommends moving to an arbitrary occurrence", async () => {
+  const message = await rejectionFor("same\n".repeat(8) + "tail\n", [
+    "*** Begin Patch", "*** Update File: a", "@@", "-tail", "+changed",
+    "@@", "-same", "+changed", "*** End Patch",
+  ].join("\n"));
+  assert.match(message, /lines 1, 2, 3, 4, 5, 6, … 2 more/);
+  assert.match(message, /ambiguous.*add surrounding context/);
+  assert.doesNotMatch(message, /move (this|the) hunk/);
 });
 
 test("omits the escape notice when the report contains no escape sequences", async () => {
