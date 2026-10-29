@@ -2,7 +2,7 @@
   "name": "@d3ara1n/pi-apply-patch",
   "version": "0.5.1",
   "type": "module",
-  "description": "Codex-compatible freeform apply_patch editing within the current pi workspace",
+  "description": "Codex-compatible freeform apply_patch editing with configurable workspace boundaries",
   "homepage": "https://github.com/d3ara1n/pi-extensions/tree/main/packages/pi-apply-patch#readme",
   "bugs": {
     "url": "https://github.com/d3ara1n/pi-extensions/issues"
