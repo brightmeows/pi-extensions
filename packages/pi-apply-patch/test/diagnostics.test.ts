@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { applyPatch } from "../src/apply.ts";
 import { MemoryFileSystem } from "./memory-fs.ts";
+import { renderRejection } from "../src/report.ts";
 
 async function rejection(source: string, expected: string[]): Promise<string> {
   const fs = new MemoryFileSystem({ a: source });
@@ -78,5 +79,38 @@ test("omits the escape notice when the report contains no escape sequences", asy
 
 test("keeps the escape notice when the report contains an escaped code point", async () => {
   const message = await rejection("😀al\u200Bpha\n", ["😀alpha"]);
+  assert.match(message, /Quoted text uses diagnostic escapes/);
+});
+
+test("does not mistake literal Unicode escape syntax for generated escapes", async () => {
+  const message = await rejection("unrelated\n", [String.raw`const x = "\u1234\u{200B}";`]);
+  assert.doesNotMatch(message, /Quoted text uses diagnostic escapes/);
+});
+
+test("does not infer diagnostic escapes from paths or filesystem errors", () => {
+  const message = renderRejection({
+    rejected: [{ path: String.raw`C:\u1234.txt`, kind: "delete", reason: String.raw`missing \u{200B}` }],
+    verified: [String.raw`C:\u5678.txt`],
+  });
+  assert.doesNotMatch(message, /Quoted text uses diagnostic escapes/);
+});
+
+test("tracks supplementary Unicode escapes without leaking state between reports", async () => {
+  const escaped = await rejection("unrelated\n", ["x\u{E0100}"]);
+  assert.ok(escaped.includes("\\u{E0100}"));
+  assert.match(escaped, /Quoted text uses diagnostic escapes/);
+  const plain = await rejection("unrelated\n", ["plain"]);
+  assert.doesNotMatch(plain, /Quoted text uses diagnostic escapes/);
+});
+
+test("omits the escape notice when the escaped character is outside the displayed excerpt", async () => {
+  const message = await rejection("unrelated\n", ["x".repeat(100) + "\u200B"]);
+  assert.match(message, /excerpt, columns/);
+  assert.doesNotMatch(message, /Quoted text uses diagnostic escapes/);
+});
+
+test("includes the escape notice for a lone surrogate encoded by JSON", async () => {
+  const message = await rejection("unrelated\n", ["x\uD800"]);
+  assert.ok(message.includes("\\ud800"));
   assert.match(message, /Quoted text uses diagnostic escapes/);
 });
